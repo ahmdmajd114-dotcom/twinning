@@ -292,7 +292,7 @@ bot.on('text', async (ctx) => {
   }
   if (ctx.session?.flow !== 'register') return;
   const s = ctx.session;
-  if (s.step === 'real_name') { s.form.real_name = text; s.step = 'gender'; return ctx.reply('حدّد جنسك. هذا يُستخدم حصراً لمنع أي اقتراح بين الجنسين:', buttons([['بنت', 'gender:female'], ['ولد', 'gender:male']])); }
+  if (s.step === 'real_name') { s.form.real_name = text; s.step = 'gender'; return ctx.reply('حدّد جنسك:', buttons([['بنت', 'gender:female'], ['ولد', 'gender:male']])); }
   if (s.step === 'birth_year') { const year = Number(text); if (!Number.isInteger(year) || ageFrom(year) < 16 || ageFrom(year) > 60) return ctx.reply('اكتب سنة ميلاد صحيحة (العمر المسموح من 16 إلى 60).'); s.form.birth_year = year; s.step = 'city'; return ctx.reply('اكتب مدينتك:'); }
   if (s.step === 'city') { s.form.city = text; s.step = 'university'; return ctx.reply('اكتب اسم الجامعة أو المعهد:'); }
   if (s.step === 'university') { s.form.university = text; s.step = 'major'; return ctx.reply('اكتب تخصصك:'); }
