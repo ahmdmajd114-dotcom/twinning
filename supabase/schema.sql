@@ -32,6 +32,9 @@ alter table profiles add column if not exists country text not null default 'Ø§Ù
 alter table profiles add column if not exists available_days text[];
 alter table profiles add column if not exists available_slots text[];
 alter table profiles add column if not exists availability_notified_at timestamptz;
+alter table profiles add column if not exists call_preference text check (call_preference in ('call', 'no_call', 'both'));
+alter table profiles add column if not exists aloud_reading_preference text check (aloud_reading_preference in ('prefer', 'okay', 'no'));
+alter table profiles add column if not exists call_preferences_notified_at timestamptz;
 
 -- Allow fixed choices plus a user-entered duration or study mode when needed.
 alter table profiles drop constraint if exists profiles_session_duration_check;
@@ -127,6 +130,35 @@ create table if not exists session_feedback (
   unique (study_session_id, reviewer_telegram_id)
 );
 
+-- Question-solving sessions can run with a private video-call room or entirely in the bot.
+create table if not exists question_sessions (
+  id bigint generated always as identity primary key,
+  connection_id bigint not null references connections(id) on delete cascade,
+  creator_telegram_id bigint not null references profiles(telegram_id) on delete cascade,
+  recipient_telegram_id bigint not null references profiles(telegram_id) on delete cascade,
+  topic text not null check (char_length(topic) between 1 and 180),
+  question_count smallint not null check (question_count between 1 and 100),
+  call_mode text not null check (call_mode in ('call', 'no_call')),
+  room_url text,
+  status text not null default 'pending' check (status in ('pending', 'active', 'completed', 'declined', 'expired')),
+  accepted_at timestamptz,
+  completed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists question_items (
+  id bigint generated always as identity primary key,
+  question_session_id bigint not null references question_sessions(id) on delete cascade,
+  sender_telegram_id bigint not null references profiles(telegram_id) on delete cascade,
+  body text not null check (char_length(body) between 1 and 2000),
+  attachment_type text check (attachment_type in ('photo', 'document')),
+  attachment_file_id text,
+  is_solved boolean not null default false,
+  solved_by_telegram_id bigint references profiles(telegram_id) on delete set null,
+  created_at timestamptz not null default now(),
+  solved_at timestamptz
+);
+
 -- A planned time sends both partners a check-in; this powers attendance and punctuality.
 create table if not exists study_reminders (
   id bigint generated always as identity primary key,
@@ -164,3 +196,5 @@ create index if not exists identity_disclosures_recipient_index on identity_disc
 create index if not exists study_tasks_connection_index on study_tasks (connection_id, is_done);
 create index if not exists study_sessions_connection_status_index on study_sessions (connection_id, status, started_at desc);
 create index if not exists study_reminders_pending_index on study_reminders (status, reminder_at);
+create index if not exists question_sessions_connection_index on question_sessions (connection_id, status, created_at desc);
+create index if not exists question_items_session_index on question_items (question_session_id, is_solved, created_at);

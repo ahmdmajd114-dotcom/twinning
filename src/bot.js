@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { Telegraf, Markup, session } from 'telegraf';
 import { createClient } from '@supabase/supabase-js';
 
@@ -18,6 +19,7 @@ const labels = {
   exam: 'تحضير للامتحانات', routine: 'التزام بروتين', assignments: 'واجبات ومشاريع', revise: 'مراجعة',
   online: 'أونلاين', in_person: 'حضوري', both: 'أونلاين وحضوري',
   study: 'مذاكرة فعلية', accountability: 'التزام ومتابعة',
+  call: 'يفضّل مكالمة', no_call: 'بدون مكالمة', prefer: 'يحب القراءة بصوت عالٍ', okay: 'عادي عنده', no: 'لا يفضّلها',
   sessions: 'جلسات بالأسبوع',
   25: '25 دقيقة', 30: '30 دقيقة', 45: '45 دقيقة', 50: '50 دقيقة', 60: 'ساعة', 90: 'ساعة ونصف', 120: 'ساعتان'
 };
@@ -39,11 +41,12 @@ const AVAILABILITY_SLOTS = [['early_morning', '6–9 صباحاً'], ['morning',
 const menu = Markup.keyboard([
   ['🔎 ابحث عن شريك', '🤝 طلباتي'],
   ['⚡ جاهز أدرس هسة', '⏱️ جلسة دراسة'],
-  ['📋 مهامنا', '➕ مهمة'],
-  ['🔔 ضبط تذكير', '📊 تقريرنا'],
-  ['✉️ راسل شريكاً', '🔐 كشف هويتي'],
-  ['📝 تحديث بياناتي', '👤 ملفي'],
-  ['⭐ قيّم شريكاً', '🗑️ حذف حسابي']
+  ['🧩 حل أسئلة', '📋 مهامنا'],
+  ['➕ مهمة', '🔔 ضبط تذكير'],
+  ['📊 تقريرنا', '✉️ راسل شريكاً'],
+  ['🔐 كشف هويتي', '📝 تحديث بياناتي'],
+  ['👤 ملفي', '⭐ قيّم شريكاً'],
+  ['🗑️ حذف حسابي']
 ]).resize();
 
 function aliasFor(id) {
@@ -116,6 +119,8 @@ function aiProfile(profile, id) {
     seriousness: profile.seriousness,
     available_days: Array.isArray(profile.available_days) ? profile.available_days : [],
     available_slots: Array.isArray(profile.available_slots) ? profile.available_slots : [],
+    call_preference: profile.call_preference,
+    aloud_reading_preference: profile.aloud_reading_preference,
     reliability: profile.reliability ?? 50
   };
 }
@@ -209,6 +214,8 @@ function score(me, candidate) {
   if (me.partner_preference && me.partner_preference === candidate.partner_preference) value += 3;
   if (me.sessions_per_week && Math.abs(me.sessions_per_week - candidate.sessions_per_week) <= 1) value += 3;
   if (me.seriousness && Math.abs(me.seriousness - candidate.seriousness) <= 1) value += 2;
+  if (me.call_preference && candidate.call_preference && (me.call_preference === candidate.call_preference || me.call_preference === 'both' || candidate.call_preference === 'both')) value += 4;
+  if (me.aloud_reading_preference && candidate.aloud_reading_preference && me.aloud_reading_preference === candidate.aloud_reading_preference) value += 3;
   value += Math.round(((candidate.reliability ?? 50) - 50) * 0.12);
   return Math.min(value, 100);
 }
@@ -331,7 +338,7 @@ async function findMatches(ctx) {
     const studyFocus = person.study_focus ? `\n📖 يدرس/يحضّر: ${person.study_focus}` : '';
     const grades = person.previous_grades ? `\n📊 التقديرات السابقة: ${person.previous_grades}` : '';
     const preferences = person.sessions_per_week
-      ? `\n📅 الجلسات: ${person.sessions_per_week} بالأسبوع · ${labels[person.session_duration] || `${person.session_duration} دقيقة`}\n💻 نمط الدراسة: ${labels[person.study_mode] || person.study_mode}\n🤝 يريد من الشريك: ${person.partner_preference === 'both' ? 'الاثنين' : labels[person.partner_preference]}\n⭐ مستوى الجدية: ${'⭐'.repeat(person.seriousness)}`
+      ? `\n📅 الجلسات: ${person.sessions_per_week} بالأسبوع · ${labels[person.session_duration] || `${person.session_duration} دقيقة`}\n💻 نمط الدراسة: ${labels[person.study_mode] || person.study_mode}\n🤝 يريد من الشريك: ${person.partner_preference === 'both' ? 'الاثنين' : labels[person.partner_preference]}\n🎥 المكالمة: ${labels[person.call_preference] || 'لم يحدّد'}\n🗣 القراءة بصوت عالٍ: ${labels[person.aloud_reading_preference] || 'لم يحدّد'}\n⭐ مستوى الجدية: ${'⭐'.repeat(person.seriousness)}`
       : '\n📝 لم يحدّث تفضيلات الدراسة بعد.';
     const availability = availabilitySummary(person) ? `\n🗓 التوفر: ${availabilitySummary(person)}` : '\n🗓 لم يحدّد أيامه وأوقاته بعد.';
     const aiReason = person.aiReason ? `\n🤖 سبب الاقتراح: ${person.aiReason}` : '';
@@ -451,6 +458,38 @@ async function showTasks(ctx) {
     await ctx.reply(`${state}\n📋 ${task.title}${due}`, action);
   }
 }
+function questionSessionKeyboard(questionSession) {
+  const rows = [
+    [Markup.button.callback('➕ أرسل سؤال', `question_add:${questionSession.id}`), Markup.button.callback('📚 عرض الأسئلة', `question_list:${questionSession.id}`)],
+    [Markup.button.callback('✅ أنهي الجلسة', `question_end:${questionSession.id}`)]
+  ];
+  if (questionSession.call_mode === 'call' && questionSession.room_url) rows.unshift([Markup.button.url('🎥 ادخلوا المكالمة', questionSession.room_url)]);
+  return Markup.inlineKeyboard(rows);
+}
+async function activeQuestionSessionForUser(id, telegramId) {
+  const { data, error } = await db.from('question_sessions').select('*').eq('id', id).eq('status', 'active').maybeSingle();
+  if (error) throw error;
+  if (!data || (data.creator_telegram_id !== telegramId && data.recipient_telegram_id !== telegramId)) return null;
+  return data;
+}
+async function sendQuestionItem(ctx, questionSession, payload) {
+  const partnerId = questionSession.creator_telegram_id === ctx.from.id ? questionSession.recipient_telegram_id : questionSession.creator_telegram_id;
+  const { count, error: countError } = await db.from('question_items').select('*', { count: 'exact', head: true }).eq('question_session_id', questionSession.id);
+  if (countError) throw countError;
+  if ((count || 0) >= questionSession.question_count) {
+    await ctx.reply(`وصلتوا العدد المحدد (${questionSession.question_count} سؤال). حلّوا الموجود أو أنهوا الجلسة ✅`);
+    return null;
+  }
+  const row = { question_session_id: questionSession.id, sender_telegram_id: ctx.from.id, body: payload.body, attachment_type: payload.attachmentType || null, attachment_file_id: payload.fileId || null };
+  const { data: item, error } = await db.from('question_items').insert(row).select().single();
+  if (error) throw error;
+  const prefix = `❓ سؤال جديد ضمن «${questionSession.topic}»\n━━━━━━━━━━━━\n`;
+  if (payload.attachmentType === 'photo') await bot.telegram.sendPhoto(partnerId, payload.fileId, { caption: `${prefix}${payload.body}` });
+  else if (payload.attachmentType === 'document') await bot.telegram.sendDocument(partnerId, payload.fileId, { caption: `${prefix}${payload.body}` });
+  else await bot.telegram.sendMessage(partnerId, `${prefix}${payload.body}`);
+  await bot.telegram.sendMessage(partnerId, 'لما تحلون السؤال، افتحوا «📚 عرض الأسئلة» وعلّموا عليه.', questionSessionKeyboard(questionSession));
+  return item;
+}
 async function streakFor(connectionId) {
   const { data, error } = await db.from('study_sessions').select('completed_at').eq('connection_id', connectionId).eq('status', 'completed').not('completed_at', 'is', null).order('completed_at', { ascending: false }).limit(90);
   if (error) throw error;
@@ -556,6 +595,12 @@ async function processStudyAutomation() {
     await db.from('study_sessions').update({ status: 'expired' }).eq('id', sessionRow.id).eq('status', 'pending');
     await bot.telegram.sendMessage(sessionRow.starter_telegram_id, 'انتهت صلاحية دعوة جلسة الدراسة. جرّب مرة ثانية أو اضبط تذكيراً لوقت مناسب.', menu);
   }
+  const { data: expiredQuestionSessions, error: expiredQuestionError } = await db.from('question_sessions').select('*').eq('status', 'pending').lte('created_at', new Date(now.getTime() - 20 * 60_000).toISOString()).limit(50);
+  if (expiredQuestionError) throw expiredQuestionError;
+  for (const questionSession of expiredQuestionSessions) {
+    await db.from('question_sessions').update({ status: 'expired' }).eq('id', questionSession.id).eq('status', 'pending');
+    await bot.telegram.sendMessage(questionSession.creator_telegram_id, 'انتهت صلاحية دعوة جلسة حل الأسئلة. جرّب مرة ثانية أو اضبطوا وقتاً مناسباً.', menu);
+  }
   const { data: closingReminders, error: closingError } = await db.from('study_reminders').select('*').eq('status', 'sent').lte('reminder_at', new Date(now.getTime() - 15 * 60_000).toISOString()).limit(50);
   if (closingError) throw closingError;
   for (const reminder of closingReminders) {
@@ -578,7 +623,7 @@ async function processStudyAutomation() {
 bot.on('callback_query', async (ctx, next) => {
   const data = ctx.callbackQuery.data;
   await ctx.answerCbQuery();
-  const registrationButton = /^(gender|year|time|style|sessions|duration|mode|preference|seriousness|availability_day|availability_slot):/.test(data) || ['year_custom', 'availability_days_done', 'availability_slots_done'].includes(data);
+  const registrationButton = /^(gender|year|time|style|sessions|duration|mode|preference|seriousness|availability_day|availability_slot|call_pref|aloud_pref):/.test(data) || ['year_custom', 'availability_days_done', 'availability_slots_done'].includes(data);
   if (registrationButton && !ctx.session?.form) {
     return ctx.reply('انتهت جلسة التسجيل السابقة بسبب إعادة تشغيل البوت. اكتب /start ونبدأ من جديد 👋');
   }
@@ -613,6 +658,20 @@ bot.on('callback_query', async (ctx, next) => {
   }
   if (data === 'availability_slots_done') {
     if (!(ctx.session.form.available_slots || []).length) return ctx.reply('اختَر وقت واحد على الأقل.');
+    ctx.session.step = 'call_preference';
+    return ctx.reply('بالدراسة مع الشريك، شنو تفضيلك للمكالمة؟', buttons([['أفضل مكالمة 🎥', 'call_pref:call'], ['أفضل بدون مكالمة 💬', 'call_pref:no_call'], ['عادي الاثنين', 'call_pref:both']]));
+  }
+  if (data.startsWith('call_pref:')) {
+    const value = data.split(':')[1];
+    if (!['call', 'no_call', 'both'].includes(value)) return ctx.reply('هذا الخيار غير متاح.');
+    ctx.session.form.call_preference = value;
+    ctx.session.step = 'aloud_reading_preference';
+    return ctx.reply('بالجلسة أو المكالمة، شنو موقفك من القراءة بصوت عالٍ؟', buttons([['أحبها 🗣️', 'aloud_pref:prefer'], ['عادي عندي', 'aloud_pref:okay'], ['ما أفضلها', 'aloud_pref:no']]));
+  }
+  if (data.startsWith('aloud_pref:')) {
+    const value = data.split(':')[1];
+    if (!['prefer', 'okay', 'no'].includes(value)) return ctx.reply('هذا الخيار غير متاح.');
+    ctx.session.form.aloud_reading_preference = value;
     return finishPreferences(ctx);
   }
   if (data.startsWith('location:')) {
@@ -751,6 +810,88 @@ bot.on('callback_query', async (ctx, next) => {
     ctx.session = { flow: 'reveal_identity', connectionId: Number(connectionId), recipientId: Number(recipientId) };
     return ctx.reply('راح يظهر اسمك الحقيقي لهذا الشريك وتصل رسائلك باسمك. هذا لا يكشف اسمه لك إلا إذا هو اختار ذلك أيضاً.\n\nاكتب أكشف للتأكيد.');
   }
+  if (data.startsWith('questions:')) {
+    const [, connectionId, recipientId] = data.split(':');
+    ctx.session = { flow: 'question_setup', connectionId: Number(connectionId), recipientId: Number(recipientId), step: 'topic' };
+    return ctx.reply('شنو موضوع جلسة حل الأسئلة؟ مثال: باطنية — أمراض الكلى.');
+  }
+  if (data === 'qcount_custom' && ctx.session?.flow === 'question_setup') {
+    ctx.session.step = 'question_count_custom';
+    return ctx.reply('اكتب عدد الأسئلة من 1 إلى 100:');
+  }
+  if (data.startsWith('qcount:') && ctx.session?.flow === 'question_setup') {
+    const count = Number(data.split(':')[1]);
+    if (!Number.isInteger(count) || count < 1 || count > 100) return ctx.reply('عدد الأسئلة غير صالح.');
+    ctx.session.questionCount = count;
+    ctx.session.step = 'call_mode';
+    return ctx.reply('تحبون تكون الجلسة بمكالمة؟', buttons([['🎥 نعم، مكالمة', 'qcall:call'], ['💬 لا، داخل البوت فقط', 'qcall:no_call']]));
+  }
+  if (data.startsWith('qcall:') && ctx.session?.flow === 'question_setup') {
+    const callMode = data.split(':')[1];
+    if (!['call', 'no_call'].includes(callMode)) return ctx.reply('هذا الخيار غير متاح.');
+    const roomUrl = callMode === 'call' ? `https://meet.jit.si/Twinny-${randomUUID()}` : null;
+    const { data: questionSession, error } = await db.from('question_sessions').insert({ connection_id: ctx.session.connectionId, creator_telegram_id: ctx.from.id, recipient_telegram_id: ctx.session.recipientId, topic: ctx.session.topic, question_count: ctx.session.questionCount, call_mode: callMode, room_url: roomUrl }).select().single();
+    if (error) throw error;
+    const me = await profile(ctx.from.id);
+    ctx.session = {};
+    await bot.telegram.sendMessage(questionSession.recipient_telegram_id, `🧩 ${me.pseudonym} يدعوك لجلسة حل أسئلة\n📖 الموضوع: ${questionSession.topic}\n🔢 العدد: ${questionSession.question_count} سؤال\n${callMode === 'call' ? '🎥 تتضمن مكالمة خاصة.' : '💬 داخل البوت فقط.'}`, buttons([['أوافق وأبدأ ✅', `question_accept:${questionSession.id}`], ['مو هسه', `question_decline:${questionSession.id}`]]));
+    return ctx.reply('تم إرسال دعوة جلسة حل الأسئلة 🤝', menu);
+  }
+  if (data.startsWith('question_accept:')) {
+    const id = Number(data.split(':')[1]);
+    const { data: row, error } = await db.from('question_sessions').update({ status: 'active', accepted_at: new Date().toISOString() }).eq('id', id).eq('recipient_telegram_id', ctx.from.id).eq('status', 'pending').select().maybeSingle();
+    if (error) throw error;
+    if (!row) return ctx.reply('هذه الدعوة انتهت أو تم التعامل معها.');
+    const text = `🧩 بدأت جلسة حل الأسئلة\n📖 ${row.topic}\n🎯 الهدف: ${row.question_count} سؤال\n\nأرسلوا الأسئلة نصاً أو كصورة/ملف، وعلّموا السؤال من تحلوه.`;
+    await bot.telegram.sendMessage(row.creator_telegram_id, text, questionSessionKeyboard(row));
+    await bot.telegram.sendMessage(row.recipient_telegram_id, text, questionSessionKeyboard(row));
+    return;
+  }
+  if (data.startsWith('question_decline:')) {
+    const id = Number(data.split(':')[1]);
+    const { data: row } = await db.from('question_sessions').update({ status: 'declined' }).eq('id', id).eq('recipient_telegram_id', ctx.from.id).eq('status', 'pending').select().maybeSingle();
+    if (!row) return ctx.reply('هذه الدعوة انتهت أو تم التعامل معها.');
+    await bot.telegram.sendMessage(row.creator_telegram_id, 'شريكك ما يقدر يبدأ جلسة الأسئلة هسه. نسقوا وقت آخر 🔔', menu);
+    return ctx.reply('تمام، نسقوا وقت آخر.', menu);
+  }
+  if (data.startsWith('question_add:')) {
+    const id = Number(data.split(':')[1]);
+    const questionSession = await activeQuestionSessionForUser(id, ctx.from.id);
+    if (!questionSession) return ctx.reply('هذه الجلسة غير متاحة.');
+    ctx.session = { flow: 'question_add', questionSessionId: id };
+    return ctx.reply('أرسل السؤال الآن: نص، أو صورة، أو ملف.');
+  }
+  if (data.startsWith('question_list:')) {
+    const id = Number(data.split(':')[1]);
+    const questionSession = await activeQuestionSessionForUser(id, ctx.from.id);
+    if (!questionSession) return ctx.reply('هذه الجلسة غير متاحة.');
+    const { data: items, error } = await db.from('question_items').select('*').eq('question_session_id', id).order('created_at', { ascending: true });
+    if (error) throw error;
+    if (!items.length) return ctx.reply(`بعد ما انضافت أسئلة لجلسة «${questionSession.topic}».`, questionSessionKeyboard(questionSession));
+    for (const item of items) await ctx.reply(`${item.is_solved ? '✅' : '❓'} سؤال ${item.id}\n${item.body}`, item.is_solved ? undefined : buttons([['تم الحل ✅', `question_solved:${item.id}`]]));
+    return;
+  }
+  if (data.startsWith('question_solved:')) {
+    const id = Number(data.split(':')[1]);
+    const { data: item, error } = await db.from('question_items').select('question_session_id').eq('id', id).maybeSingle();
+    if (error) throw error;
+    const questionSession = item && await activeQuestionSessionForUser(item.question_session_id, ctx.from.id);
+    if (!questionSession) return ctx.reply('هذا السؤال غير متاح.');
+    await db.from('question_items').update({ is_solved: true, solved_by_telegram_id: ctx.from.id, solved_at: new Date().toISOString() }).eq('id', id);
+    return ctx.reply('تم تعليم السؤال كمحلول ✅');
+  }
+  if (data.startsWith('question_end:')) {
+    const id = Number(data.split(':')[1]);
+    const questionSession = await activeQuestionSessionForUser(id, ctx.from.id);
+    if (!questionSession) return ctx.reply('هذه الجلسة غير متاحة.');
+    const { data: items, error } = await db.from('question_items').select('id, is_solved').eq('question_session_id', id);
+    if (error) throw error;
+    await db.from('question_sessions').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', id);
+    const summary = `🏁 اكتملت جلسة حل الأسئلة\n📖 ${questionSession.topic}\n✅ المحلول: ${(items || []).filter((item) => item.is_solved).length}/${(items || []).length} سؤال\n🎯 الهدف الأصلي: ${questionSession.question_count} سؤال`;
+    await bot.telegram.sendMessage(questionSession.creator_telegram_id, summary, menu);
+    await bot.telegram.sendMessage(questionSession.recipient_telegram_id, summary, menu);
+    return;
+  }
   if (data.startsWith('task:')) {
     const [, connectionId, recipientId] = data.split(':');
     ctx.session = { flow: 'task', connectionId: Number(connectionId), recipientId: Number(recipientId), step: 'title' };
@@ -867,6 +1008,7 @@ bot.on('text', async (ctx) => {
   if (text === '📋 مهامنا') return showTasks(ctx);
   if (text === '➕ مهمة') return choosePartner(ctx, 'task', 'لمن تريد إضافة هذه المهمة المشتركة؟');
   if (text === '⏱️ جلسة دراسة') return choosePartner(ctx, 'session', 'اختَر الشريك ثم ابدأ جلسة الدراسة:');
+  if (text === '🧩 حل أسئلة') return choosePartner(ctx, 'questions', 'اختَر الشريك لجلسة حل الأسئلة:');
   if (text === '⚡ جاهز أدرس هسة') return choosePartner(ctx, 'ready', 'منو تريد تناديه لجلسة سريعة هسه؟');
   if (text === '🔔 ضبط تذكير') return choosePartner(ctx, 'reminder', 'اختَر الشريك ثم حدّد وقت التذكير:');
   if (text === '📊 تقريرنا') return showWeeklyReport(ctx);
@@ -887,6 +1029,27 @@ bot.on('text', async (ctx) => {
   if (ctx.session?.flow === 'message') {
     await sendRelay(ctx, ctx.session.connectionId, ctx.session.recipientId, text);
     ctx.session = {}; return ctx.reply('تم إرسال رسالتك ✉️', menu);
+  }
+  if (ctx.session?.flow === 'question_setup' && ctx.session.step === 'topic') {
+    if (!text || text.length > 180) return ctx.reply('اكتب موضوعاً مختصراً، حتى 180 حرف.');
+    ctx.session.topic = text;
+    ctx.session.step = 'question_count';
+    return ctx.reply('كم سؤال تريدون تحلون بهالجلسة؟', buttons([['5 أسئلة', 'qcount:5'], ['10 أسئلة', 'qcount:10'], ['20 سؤال', 'qcount:20'], ['عدد آخر ✏️', 'qcount_custom']]));
+  }
+  if (ctx.session?.flow === 'question_setup' && ctx.session.step === 'question_count_custom') {
+    const count = Number(text);
+    if (!Number.isInteger(count) || count < 1 || count > 100) return ctx.reply('اكتب عدداً من 1 إلى 100.');
+    ctx.session.questionCount = count;
+    ctx.session.step = 'call_mode';
+    return ctx.reply('تحبون تكون الجلسة بمكالمة؟', buttons([['🎥 نعم، مكالمة', 'qcall:call'], ['💬 لا، داخل البوت فقط', 'qcall:no_call']]));
+  }
+  if (ctx.session?.flow === 'question_add') {
+    const questionSession = await activeQuestionSessionForUser(ctx.session.questionSessionId, ctx.from.id);
+    if (!questionSession) { ctx.session = {}; return ctx.reply('الجلسة انتهت أو لم تعد متاحة.', menu); }
+    const item = await sendQuestionItem(ctx, questionSession, { body: text });
+    ctx.session = {};
+    if (!item) return ctx.reply('ما انضاف سؤال جديد.', questionSessionKeyboard(questionSession));
+    return ctx.reply('تم إرسال السؤال لشريكك ✅', questionSessionKeyboard(questionSession));
   }
   if (ctx.session?.flow === 'session_reflection') return saveSessionReflection(ctx, ctx.session.sessionId, text);
   if (ctx.session?.flow === 'reminder') {
@@ -952,6 +1115,30 @@ bot.on('text', async (ctx) => {
   if (s.step === 'previous_grades') { s.form.previous_grades = text === '-' ? null : text; return startPreferenceQuestions(ctx, 'register', s.form); }
 });
 
+bot.on('photo', async (ctx) => {
+  if (ctx.session?.flow !== 'question_add') return;
+  const questionSession = await activeQuestionSessionForUser(ctx.session.questionSessionId, ctx.from.id);
+  if (!questionSession) { ctx.session = {}; return ctx.reply('الجلسة انتهت أو لم تعد متاحة.', menu); }
+  const fileId = ctx.message.photo.at(-1).file_id;
+  const body = ctx.message.caption?.trim() || 'سؤال بصورة';
+  const item = await sendQuestionItem(ctx, questionSession, { body, attachmentType: 'photo', fileId });
+  ctx.session = {};
+  if (!item) return ctx.reply('ما انضاف سؤال جديد.', questionSessionKeyboard(questionSession));
+  return ctx.reply('تم إرسال صورة السؤال لشريكك ✅', questionSessionKeyboard(questionSession));
+});
+
+bot.on('document', async (ctx) => {
+  if (ctx.session?.flow !== 'question_add') return;
+  const questionSession = await activeQuestionSessionForUser(ctx.session.questionSessionId, ctx.from.id);
+  if (!questionSession) { ctx.session = {}; return ctx.reply('الجلسة انتهت أو لم تعد متاحة.', menu); }
+  const fileId = ctx.message.document.file_id;
+  const body = ctx.message.caption?.trim() || `ملف سؤال: ${ctx.message.document.file_name || 'مرفق'}`;
+  const item = await sendQuestionItem(ctx, questionSession, { body, attachmentType: 'document', fileId });
+  ctx.session = {};
+  if (!item) return ctx.reply('ما انضاف سؤال جديد.', questionSessionKeyboard(questionSession));
+  return ctx.reply('تم إرسال ملف السؤال لشريكك ✅', questionSessionKeyboard(questionSession));
+});
+
 // Registration callbacks are separate so all selection questions remain button-only.
 bot.action(/^gender:(female|male)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.gender = ctx.match[1]; ctx.session.step = 'birth_year'; await ctx.reply('اكتب سنة ميلادك (مثال: 2004):'); });
 bot.action('year_custom', async (ctx) => { await ctx.answerCbQuery(); ctx.session.step = 'academic_year_custom'; await ctx.reply('اكتب مرحلتك الدراسية أو الوصف الذي يناسبك:'); });
@@ -998,6 +1185,18 @@ async function notifyAvailabilityUpdates() {
     }
   }
 }
+async function notifyCallPreferenceUpdates() {
+  const { data, error } = await db.from('profiles').select('telegram_id').not('available_days', 'is', null).is('call_preference', null).is('call_preferences_notified_at', null).limit(500);
+  if (error) return console.error('Could not find profiles needing call-preference updates:', error.message);
+  for (const student of data) {
+    try {
+      await bot.telegram.sendMessage(student.telegram_id, '🎥 أضفنا تفضيل المكالمة والقراءة بصوت عالٍ حتى نخلي التوأمة أدق.', buttons([['حدّث تفضيلات الجلسات', 'update_availability']]));
+      await db.from('profiles').update({ call_preferences_notified_at: new Date().toISOString() }).eq('telegram_id', student.telegram_id);
+    } catch (error) {
+      console.error(`Could not notify call preference update for ${student.telegram_id}:`, error.message);
+    }
+  }
+}
 
 healthServer.listen(port, '0.0.0.0', () => console.log(`Health check listening on :${port}`));
 let shuttingDown = false;
@@ -1009,6 +1208,7 @@ async function startBot() {
     console.log('Twinny bot is running with long polling.');
     await notifyExistingStudents();
     await notifyAvailabilityUpdates();
+    await notifyCallPreferenceUpdates();
     await processStudyAutomation().catch((error) => console.error('Study automation failed:', error.message));
     if (!automationTimer) automationTimer = setInterval(() => processStudyAutomation().catch((error) => console.error('Study automation failed:', error.message)), 60_000);
   } catch (error) {
