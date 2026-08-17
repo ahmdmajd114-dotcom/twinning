@@ -18,10 +18,19 @@ const labels = {
   exam: 'تحضير للامتحانات', routine: 'التزام بروتين', assignments: 'واجبات ومشاريع', revise: 'مراجعة',
   online: 'أونلاين', in_person: 'حضوري', both: 'أونلاين وحضوري',
   study: 'مذاكرة فعلية', accountability: 'التزام ومتابعة',
-  sessions: 'جلسات بالأسبوع'
+  sessions: 'جلسات بالأسبوع',
+  30: '30 دقيقة', 45: '45 دقيقة', 60: 'ساعة', 90: 'ساعة ونصف', 120: 'ساعتان'
 };
 const buttons = (items) => Markup.inlineKeyboard(items.map(([text, value]) => [Markup.button.callback(text, value)]));
-const menu = Markup.keyboard([['🔎 ابحث عن شريك', '🤝 طلباتي'], ['📝 تحديث بياناتي', '✉️ راسل شريكاً'], ['🔐 كشف هويتي', '📋 مهامنا'], ['➕ مهمة', '⏱️ جلسة دراسة'], ['👤 ملفي', '⭐ قيّم شريكاً'], ['🗑️ حذف حسابي']]).resize();
+const menu = Markup.keyboard([
+  ['🔎 ابحث عن شريك', '🤝 طلباتي'],
+  ['⚡ جاهز أدرس هسة', '⏱️ جلسة دراسة'],
+  ['📋 مهامنا', '➕ مهمة'],
+  ['🔔 ضبط تذكير', '📊 تقريرنا'],
+  ['✉️ راسل شريكاً', '🔐 كشف هويتي'],
+  ['📝 تحديث بياناتي', '👤 ملفي'],
+  ['⭐ قيّم شريكاً', '🗑️ حذف حسابي']
+]).resize();
 
 function aliasFor(id) {
   const n = Math.abs(Number(BigInt(id) % 10000n));
@@ -211,11 +220,14 @@ async function findMatches(ctx) {
     const { data: ratings } = await db.from('ratings').select('stars, commitment').eq('reviewed_telegram_id', person.telegram_id);
     const average = ratings?.length ? (ratings.reduce((sum, r) => sum + r.stars, 0) / ratings.length).toFixed(1) : 'جديد';
     const committed = ratings?.filter((r) => r.commitment === 'committed').length ?? 0;
-    const preferences = person.sessions_per_week ? `\n📅 ${person.sessions_per_week} جلسات/أسبوع · ${labels[person.study_mode]} · جدية ${'⭐'.repeat(person.seriousness)}` : '';
-    const aiReason = person.aiReason ? `\n🤖 ${person.aiReason}` : '';
     const studyFocus = person.study_focus ? `\n📖 يدرس/يحضّر: ${person.study_focus}` : '';
     const grades = person.previous_grades ? `\n📊 التقديرات السابقة: ${person.previous_grades}` : '';
-    await ctx.reply(`👤 ${person.pseudonym}\n${person.major} · ${person.academic_year}\n${person.university}، ${person.city}${studyFocus}${grades}\n⏰ ${labels[person.study_time]} · 🧠 ${labels[person.learning_style]}${preferences}\n✨ توافق ${score(me, person)}٪${aiReason}\n⭐ التقييم: ${average}${average === 'جديد' ? '' : ` / 5 (${ratings.length} تقييم، ملتزم: ${committed})`}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
+    const preferences = person.sessions_per_week
+      ? `\n📅 الجلسات: ${person.sessions_per_week} بالأسبوع · ${labels[person.session_duration]}\n💻 نمط الدراسة: ${labels[person.study_mode]}\n🤝 يريد من الشريك: ${person.partner_preference === 'both' ? 'الاثنين' : labels[person.partner_preference]}\n⭐ مستوى الجدية: ${'⭐'.repeat(person.seriousness)}`
+      : '\n📝 لم يحدّث تفضيلات الدراسة بعد.';
+    const aiReason = person.aiReason ? `\n🤖 سبب الاقتراح: ${person.aiReason}` : '';
+    const rating = average === 'جديد' ? 'جديد — لا توجد تقييمات بعد' : `${average} / 5 · ${ratings.length} تقييم · ملتزم: ${committed}`;
+    await ctx.reply(`👤 شريك دراسة مقترح\n━━━━━━━━━━━━\n🏷 الاسم الظاهر: ${person.pseudonym}\n🎓 التخصص والمرحلة: ${person.major} · ${person.academic_year}\n🏛 الجامعة: ${person.university}\n📍 المحافظة: ${person.city}${studyFocus}${grades}\n━━━━━━━━━━━━\n⏰ وقت الدراسة: ${labels[person.study_time]}\n🧠 أسلوب الدراسة: ${labels[person.learning_style]}${preferences}\n━━━━━━━━━━━━\n✨ نسبة التوافق: ${score(me, person)}٪${aiReason}\n⭐ التقييم: ${rating}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
   }
 }
 
@@ -275,17 +287,183 @@ async function sendRelay(ctx, connectionId, recipientId, body) {
   const displayName = await hasRevealedName(connectionId, ctx.from.id, recipientId) ? me.real_name : me.pseudonym;
   await bot.telegram.sendMessage(recipientId, `💬 ${displayName}\n━━━━━━━━━━━━\n${body}`, { reply_markup: { inline_keyboard: [[Markup.button.callback(`رد على ${displayName} ↩︎`, `message:${connectionId}:${ctx.from.id}`)]] } });
 }
+function baghdadParts(date = new Date()) {
+  return Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Baghdad', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+}
+function baghdadDay(date) {
+  const parts = baghdadParts(date);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+function nextBaghdadTime(value) {
+  const match = value.match(/^(?:الساعة\s*)?(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hour = Number(match[1]); const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return null;
+  const now = new Date(); const parts = baghdadParts(now);
+  let date = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), hour - 3, minute));
+  if (date.getTime() <= now.getTime() + 60_000) date = new Date(date.getTime() + 24 * 60 * 60 * 1000);
+  return date;
+}
+function durationLabel(minutes) { return `${minutes} دقيقة`; }
+function sessionActions(sessionId) {
+  return buttons([['أنهي واكتب إنجازي ✅', `session_reflect:${sessionId}`]]);
+}
+async function createSessionInvite(connectionId, starterId, recipientId, minutes) {
+  const { data, error } = await db.from('study_sessions').insert({ connection_id: connectionId, starter_telegram_id: starterId, recipient_telegram_id: recipientId, planned_minutes: minutes, status: 'pending' }).select().single();
+  if (error) throw error;
+  return data;
+}
+async function activateStudySession(sessionRow) {
+  const acceptedAt = new Date();
+  const endsAt = new Date(acceptedAt.getTime() + sessionRow.planned_minutes * 60_000);
+  const { data: active, error } = await db.from('study_sessions').update({ status: 'active', accepted_at: acceptedAt.toISOString(), started_at: acceptedAt.toISOString(), ends_at: endsAt.toISOString() }).eq('id', sessionRow.id).eq('status', 'pending').select().maybeSingle();
+  if (error) throw error;
+  return active;
+}
+async function announceActiveSession(sessionRow) {
+  const starter = await profile(sessionRow.starter_telegram_id);
+  const recipient = await profile(sessionRow.recipient_telegram_id);
+  const end = new Intl.DateTimeFormat('ar-IQ', { timeZone: 'Asia/Baghdad', hour: 'numeric', minute: '2-digit' }).format(new Date(sessionRow.ends_at));
+  const text = `⏱️ بدأت جلستكم المشتركة لمدة ${durationLabel(sessionRow.planned_minutes)}\nتنتهي تقريباً ${end}.\n\nركزوا هسه، وعند النهاية اكتبوا شنو أنجزتم.`;
+  await bot.telegram.sendMessage(starter.telegram_id, text, sessionActions(sessionRow.id));
+  await bot.telegram.sendMessage(recipient.telegram_id, text, sessionActions(sessionRow.id));
+}
 async function showTasks(ctx) {
   const connections = await acceptedConnections(ctx.from.id);
   if (!connections.length) return ctx.reply('ماكو مهام مشتركة إلى الآن.', menu);
   const ids = connections.map((c) => c.id);
-  const { data, error } = await db.from('study_tasks').select('*').in('connection_id', ids).eq('is_done', false).order('created_at', { ascending: false });
+  const { data, error } = await db.from('study_tasks').select('*').in('connection_id', ids).order('created_at', { ascending: false }).limit(20);
   if (error) throw error;
-  if (!data.length) return ctx.reply('🎉 ماكو مهام مفتوحة. أضف مهمة مشتركة حتى تتابعون التقدم.', menu);
+  if (!data.length) return ctx.reply('🎉 ماكو مهام بعد. أضفوا أول مهمة مشتركة حتى تتابعون التقدم.', menu);
   for (const task of data) {
     const due = task.due_date ? ` · الاستحقاق: ${task.due_date}` : '';
-    await ctx.reply(`📋 ${task.title}${due}`, buttons([['تم الإنجاز ✅', `done:${task.id}`]]));
+    const state = task.is_done ? '✅ منجزة' : '🕓 مفتوحة';
+    const action = task.is_done ? undefined : buttons([['تم الإنجاز ✅', `done:${task.id}`]]);
+    await ctx.reply(`${state}\n📋 ${task.title}${due}`, action);
   }
+}
+async function streakFor(connectionId) {
+  const { data, error } = await db.from('study_sessions').select('completed_at').eq('connection_id', connectionId).eq('status', 'completed').not('completed_at', 'is', null).order('completed_at', { ascending: false }).limit(90);
+  if (error) throw error;
+  const days = new Set(data.map((row) => baghdadDay(new Date(row.completed_at))));
+  let streak = 0; let cursor = new Date();
+  if (!days.has(baghdadDay(cursor))) cursor = new Date(cursor.getTime() - 24 * 60 * 60 * 1000);
+  while (days.has(baghdadDay(cursor))) { streak += 1; cursor = new Date(cursor.getTime() - 24 * 60 * 60 * 1000); }
+  return streak;
+}
+async function showWeeklyReport(ctx) {
+  const connections = await acceptedConnections(ctx.from.id);
+  if (!connections.length) return ctx.reply('يظهر التقرير بعد ما يصير عندك شريك دراسة.', menu);
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  for (const connection of connections) {
+    const otherId = connection.requester_telegram_id === ctx.from.id ? connection.recipient_telegram_id : connection.requester_telegram_id;
+    const other = await profile(otherId);
+    const { data: sessions, error: sessionError } = await db.from('study_sessions').select('*').eq('connection_id', connection.id).eq('status', 'completed').gte('completed_at', since);
+    if (sessionError) throw sessionError;
+    const { data: tasks, error: taskError } = await db.from('study_tasks').select('*').eq('connection_id', connection.id).eq('is_done', true).gte('completed_at', since);
+    if (taskError) throw taskError;
+    const { data: reminders, error: reminderError } = await db.from('study_reminders').select('id, reminder_at').eq('connection_id', connection.id).gte('reminder_at', since).in('status', ['sent', 'closed']);
+    if (reminderError) throw reminderError;
+    const reminderIds = reminders.map((reminder) => reminder.id);
+    const { data: checkins, error: checkinError } = reminderIds.length ? await db.from('reminder_checkins').select('reminder_id, telegram_id, checked_in_at').in('reminder_id', reminderIds) : { data: [], error: null };
+    if (checkinError) throw checkinError;
+    const minutes = sessions.reduce((sum, row) => sum + (row.planned_minutes || 0), 0);
+    const mine = sessions.filter((row) => row.starter_telegram_id === ctx.from.id ? row.starter_completed_at : row.recipient_completed_at).length;
+    const partner = sessions.filter((row) => row.starter_telegram_id === otherId ? row.starter_completed_at : row.recipient_completed_at).length;
+    const streak = await streakFor(connection.id);
+    const mineCheckins = checkins.filter((checkin) => checkin.telegram_id === ctx.from.id).length;
+    const partnerCheckins = checkins.filter((checkin) => checkin.telegram_id === otherId).length;
+    await ctx.reply(`📊 تقرير آخر 7 أيام — ${other.pseudonym}\n━━━━━━━━━━━━\n⏱️ الجلسات المكتملة: ${sessions.length}\n🕐 وقت الدراسة: ${minutes} دقيقة\n📋 المهام المنجزة: ${tasks.length}\n🙋 التزامك بالجلسات: ${sessions.length ? Math.round((mine / sessions.length) * 100) : 0}٪\n🤝 التزام الشريك: ${sessions.length ? Math.round((partner / sessions.length) * 100) : 0}٪\n🔔 حضورك بالمواعيد: ${mineCheckins}/${reminders.length}\n🔔 حضور الشريك: ${partnerCheckins}/${reminders.length}\n🔥 streak مشترك: ${streak} يوم${streak >= 3 ? ' — استمروا!' : ''}`, menu);
+  }
+}
+async function saveSessionReflection(ctx, sessionId, reflection) {
+  const { data: row, error } = await db.from('study_sessions').select('*').eq('id', sessionId).in('status', ['active', 'awaiting_reflection']).maybeSingle();
+  if (error) throw error;
+  if (!row || (row.starter_telegram_id !== ctx.from.id && row.recipient_telegram_id !== ctx.from.id)) return ctx.reply('هذه الجلسة لم تعد متاحة.', menu);
+  const isStarter = row.starter_telegram_id === ctx.from.id;
+  const update = isStarter
+    ? { starter_reflection: reflection.slice(0, 600), starter_completed_at: new Date().toISOString(), status: 'awaiting_reflection' }
+    : { recipient_reflection: reflection.slice(0, 600), recipient_completed_at: new Date().toISOString(), status: 'awaiting_reflection' };
+  const { data: updated, error: updateError } = await db.from('study_sessions').update(update).eq('id', sessionId).select().single();
+  if (updateError) throw updateError;
+  ctx.session = {};
+  const partnerId = isStarter ? updated.recipient_telegram_id : updated.starter_telegram_id;
+  await bot.telegram.sendMessage(partnerId, 'شريكك كتب إنجازه للجلسة ✅ إذا خلصت، اضغط «أنهي واكتب إنجازي».', sessionActions(sessionId));
+  if (!updated.starter_reflection || !updated.recipient_reflection) return ctx.reply('تم حفظ إنجازك ✅ أنتظر شريكك يكمل ملخصه.', menu);
+  const { data: completed, error: completeError } = await db.from('study_sessions').update({ status: 'completed', ended_at: new Date().toISOString(), completed_at: new Date().toISOString() }).eq('id', sessionId).select().single();
+  if (completeError) throw completeError;
+  const starter = await profile(completed.starter_telegram_id);
+  const recipient = await profile(completed.recipient_telegram_id);
+  const recap = `🎉 اكتملت جلستكم المشتركة — ${durationLabel(completed.planned_minutes)}\n━━━━━━━━━━━━\n📝 إنجاز ${starter.pseudonym}: ${completed.starter_reflection}\n📝 إنجاز ${recipient.pseudonym}: ${completed.recipient_reflection}\n\nقيّموا الجلسة بسرعة حتى تتحسن شراكتكم.`;
+  const feedback = buttons([['قيّم الجلسة ⭐', `feedback:${completed.id}`]]);
+  await bot.telegram.sendMessage(completed.starter_telegram_id, recap, feedback);
+  await bot.telegram.sendMessage(completed.recipient_telegram_id, recap, feedback);
+  return ctx.reply('أحسنتم 🔥 اكتملت الجلسة وانحسبت ضمن الـStreak والتقرير الأسبوعي.', menu);
+}
+async function sendAutomaticWeeklyReports(now = new Date()) {
+  const weekday = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Baghdad', weekday: 'short' }).format(now);
+  const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Baghdad', hour: '2-digit', hourCycle: 'h23' }).format(now));
+  if (weekday !== 'Fri' || hour !== 20) return;
+  const weekStart = baghdadDay(new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000));
+  const since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: connections, error } = await db.from('connections').select('*').eq('status', 'accepted');
+  if (error) throw error;
+  for (const connection of connections) {
+    const { data: sent, error: sentError } = await db.from('weekly_report_sends').upsert({ connection_id: connection.id, week_start: weekStart }, { onConflict: 'connection_id,week_start', ignoreDuplicates: true }).select();
+    if (sentError || !sent?.length) continue;
+    const { data: sessions } = await db.from('study_sessions').select('planned_minutes').eq('connection_id', connection.id).eq('status', 'completed').gte('completed_at', since);
+    const { data: tasks } = await db.from('study_tasks').select('id').eq('connection_id', connection.id).eq('is_done', true).gte('completed_at', since);
+    const minutes = (sessions || []).reduce((sum, row) => sum + (row.planned_minutes || 0), 0);
+    const streak = await streakFor(connection.id);
+    const report = `📊 تقرير Twinny الأسبوعي\n━━━━━━━━━━━━\n⏱️ جلسات مكتملة: ${(sessions || []).length}\n🕐 وقت دراسة: ${minutes} دقيقة\n📋 مهام منجزة: ${(tasks || []).length}\n🔥 streak مشترك: ${streak} يوم\n\nافتحوا «📊 تقريرنا» حتى تشوفون تفاصيل الالتزام والحضور.`;
+    await bot.telegram.sendMessage(connection.requester_telegram_id, report, menu);
+    await bot.telegram.sendMessage(connection.recipient_telegram_id, report, menu);
+  }
+}
+async function processStudyAutomation() {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const { data: reminders, error: reminderError } = await db.from('study_reminders').select('*').eq('status', 'pending').lte('reminder_at', nowIso).limit(50);
+  if (reminderError) throw reminderError;
+  for (const reminder of reminders) {
+    await db.from('study_reminders').update({ status: 'sent' }).eq('id', reminder.id).eq('status', 'pending');
+    const message = '🔔 هذا موعد الدراسة المتفق عليه. اضغط حاضر حتى نسجل الالتزام، وبعدها ابدأوا جلسة الدراسة.';
+    const keyboard = buttons([['أنا حاضر ✅', `checkin:${reminder.id}`]]);
+    await bot.telegram.sendMessage(reminder.creator_telegram_id, message, keyboard);
+    await bot.telegram.sendMessage(reminder.recipient_telegram_id, message, keyboard);
+  }
+  const { data: endingSessions, error: endingError } = await db.from('study_sessions').select('*').eq('status', 'active').lte('ends_at', nowIso).limit(50);
+  if (endingError) throw endingError;
+  for (const sessionRow of endingSessions) {
+    await db.from('study_sessions').update({ status: 'awaiting_reflection' }).eq('id', sessionRow.id).eq('status', 'active');
+    const message = `⏰ انتهت جلسة ${durationLabel(sessionRow.planned_minutes)}. شنو أنجزت؟`;
+    const keyboard = sessionActions(sessionRow.id);
+    await bot.telegram.sendMessage(sessionRow.starter_telegram_id, message, keyboard);
+    await bot.telegram.sendMessage(sessionRow.recipient_telegram_id, message, keyboard);
+  }
+  const { data: expiredSessions, error: expiredError } = await db.from('study_sessions').select('*').eq('status', 'pending').lte('created_at', new Date(now.getTime() - 20 * 60_000).toISOString()).limit(50);
+  if (expiredError) throw expiredError;
+  for (const sessionRow of expiredSessions) {
+    await db.from('study_sessions').update({ status: 'expired' }).eq('id', sessionRow.id).eq('status', 'pending');
+    await bot.telegram.sendMessage(sessionRow.starter_telegram_id, 'انتهت صلاحية دعوة جلسة الدراسة. جرّب مرة ثانية أو اضبط تذكيراً لوقت مناسب.', menu);
+  }
+  const { data: closingReminders, error: closingError } = await db.from('study_reminders').select('*').eq('status', 'sent').lte('reminder_at', new Date(now.getTime() - 15 * 60_000).toISOString()).limit(50);
+  if (closingError) throw closingError;
+  for (const reminder of closingReminders) {
+    const { data: checkins, error: checkinError } = await db.from('reminder_checkins').select('telegram_id').eq('reminder_id', reminder.id);
+    if (checkinError) throw checkinError;
+    await db.from('study_reminders').update({ status: 'closed' }).eq('id', reminder.id).eq('status', 'sent');
+    const attendanceLabel = (telegramId, label) => {
+      const checkin = checkins.find((item) => item.telegram_id === telegramId);
+      if (!checkin) return `${label}: ما سجّل حضور`;
+      const delay = Math.max(0, Math.round((new Date(checkin.checked_in_at) - new Date(reminder.reminder_at)) / 60_000));
+      return delay <= 5 ? `${label}: حاضر بوقته ✅` : `${label}: حاضر متأخر ${delay} د`;
+    };
+    const result = `📌 نتيجة الموعد:\n${attendanceLabel(reminder.creator_telegram_id, 'الطالب الأول')}\n${attendanceLabel(reminder.recipient_telegram_id, 'الشريك')}\n\nاستخدموا «⏱️ جلسة دراسة» حتى تبدي الجلسة المشتركة.`;
+    await bot.telegram.sendMessage(reminder.creator_telegram_id, result, menu);
+    await bot.telegram.sendMessage(reminder.recipient_telegram_id, result, menu);
+  }
+  await sendAutomaticWeeklyReports(now);
 }
 
 bot.on('callback_query', async (ctx, next) => {
@@ -386,27 +564,99 @@ bot.on('callback_query', async (ctx, next) => {
   }
   if (data.startsWith('session:')) {
     const [, connectionId, recipientId] = data.split(':');
-    const { data: sessionRow, error } = await db.from('study_sessions').insert({ connection_id: Number(connectionId), starter_telegram_id: ctx.from.id }).select().single();
-    if (error) throw error;
-    const me = await profile(ctx.from.id);
-    await bot.telegram.sendMessage(Number(recipientId), `⏱️ ${me.pseudonym} بدأ/ت جلسة دراسة الآن. تقدرون تبدأون سوا!`, menu);
-    return ctx.reply('بدأت الجلسة ⏱️ ركّزوا، ولما تخلصون اضغط الزر.', buttons([['أنهِ جلستي ✅', `end_session:${sessionRow.id}`]]));
+    return ctx.reply('اختَر مدة الجلسة المشتركة:', buttons([['25 دقيقة ⚡', `start_session:${connectionId}:${recipientId}:25`], ['50 دقيقة 🎯', `start_session:${connectionId}:${recipientId}:50`]]));
   }
-  if (data.startsWith('end_session:')) {
+  if (data.startsWith('start_session:')) {
+    const [, connectionId, recipientId, minutes] = data.split(':');
+    const sessionRow = await createSessionInvite(Number(connectionId), ctx.from.id, Number(recipientId), Number(minutes));
+    const me = await profile(ctx.from.id);
+    await bot.telegram.sendMessage(Number(recipientId), `⏱️ ${me.pseudonym} يدعوك لجلسة دراسة مشتركة مدتها ${durationLabel(sessionRow.planned_minutes)}.\nهل تبدأون الآن؟`, buttons([['أوافق وأبدأ ✅', `session_accept:${sessionRow.id}`], ['مو هسه', `session_decline:${sessionRow.id}`]]));
+    return ctx.reply('تم إرسال الدعوة 🤝 أنتظر موافقة شريكك.', menu);
+  }
+  if (data.startsWith('session_accept:')) {
     const id = Number(data.split(':')[1]);
-    const { data: row } = await db.from('study_sessions').select('*').eq('id', id).eq('starter_telegram_id', ctx.from.id).is('ended_at', null).maybeSingle();
-    if (!row) return ctx.reply('هذه الجلسة منتهية أو غير متاحة.');
-    const endedAt = new Date();
-    await db.from('study_sessions').update({ ended_at: endedAt.toISOString() }).eq('id', id);
-    const minutes = Math.max(1, Math.round((endedAt - new Date(row.started_at)) / 60000));
-    return ctx.reply(`أحسنتم ✅ أنهيت جلسة مدتها ${minutes} دقيقة.`, menu);
+    const { data: row, error } = await db.from('study_sessions').select('*').eq('id', id).eq('recipient_telegram_id', ctx.from.id).eq('status', 'pending').maybeSingle();
+    if (error) throw error;
+    if (!row) return ctx.reply('هذه الدعوة منتهية أو تم التعامل معها.');
+    const active = await activateStudySession(row);
+    if (!active) return ctx.reply('هذه الدعوة لم تعد متاحة.');
+    await announceActiveSession(active);
+    return;
+  }
+  if (data.startsWith('session_decline:')) {
+    const id = Number(data.split(':')[1]);
+    const { data: row } = await db.from('study_sessions').select('*').eq('id', id).eq('recipient_telegram_id', ctx.from.id).eq('status', 'pending').maybeSingle();
+    if (!row) return ctx.reply('هذه الدعوة منتهية أو تم التعامل معها.');
+    await db.from('study_sessions').update({ status: 'declined' }).eq('id', id);
+    await bot.telegram.sendMessage(row.starter_telegram_id, 'شريكك ما يقدر يبدأ هسه. تقدرون تنسقون وقت أنسب 🔔', menu);
+    return ctx.reply('تم، ممكن تنسقون موعد مناسب من «🔔 ضبط تذكير».', menu);
+  }
+  if (data.startsWith('session_reflect:')) {
+    const id = Number(data.split(':')[1]);
+    const { data: row, error } = await db.from('study_sessions').select('*').eq('id', id).in('status', ['active', 'awaiting_reflection']).maybeSingle();
+    if (error) throw error;
+    if (!row || (row.starter_telegram_id !== ctx.from.id && row.recipient_telegram_id !== ctx.from.id)) return ctx.reply('هذه الجلسة غير متاحة.');
+    ctx.session = { flow: 'session_reflection', sessionId: id };
+    return ctx.reply('شنو أنجزت بهالجلسة؟ اكتب باختصار، مثال: خلصت محاضرة الكلى وحليت 20 سؤال.');
+  }
+  if (data.startsWith('ready:')) {
+    const [, connectionId, recipientId] = data.split(':');
+    const me = await profile(ctx.from.id);
+    await bot.telegram.sendMessage(Number(recipientId), `⚡ ${me.pseudonym} جاهز/ة يدرس هسة. تحبون تبدون 25 دقيقة؟`, buttons([['يلا نبدأ ⚡', `quick_session:${connectionId}:${ctx.from.id}:25`], ['مو هسه', `ready_decline:${ctx.from.id}`]]));
+    return ctx.reply('وصلت إشارة الجاهزية لشريكك ⚡', menu);
+  }
+  if (data.startsWith('quick_session:')) {
+    const [, connectionId, starterId, minutes] = data.split(':');
+    const { data: row, error } = await db.from('study_sessions').insert({ connection_id: Number(connectionId), starter_telegram_id: Number(starterId), recipient_telegram_id: ctx.from.id, planned_minutes: Number(minutes), status: 'active', accepted_at: new Date().toISOString(), started_at: new Date().toISOString(), ends_at: new Date(Date.now() + Number(minutes) * 60_000).toISOString() }).select().single();
+    if (error) throw error;
+    await announceActiveSession(row);
+    return;
+  }
+  if (data.startsWith('ready_decline:')) return ctx.reply('تمام، اختَرون وقت آخر يناسبكم 🔔', menu);
+  if (data.startsWith('reminder:')) {
+    const [, connectionId, recipientId] = data.split(':');
+    ctx.session = { flow: 'reminder', connectionId: Number(connectionId), recipientId: Number(recipientId) };
+    return ctx.reply('اكتب وقت التذكير بصيغة 24 ساعة HH:MM بتوقيت بغداد. مثال: 20:00\nإذا مرّ الوقت، ينضبط تلقائياً لباجر.');
+  }
+  if (data.startsWith('checkin:')) {
+    const id = Number(data.split(':')[1]);
+    const { data: reminder } = await db.from('study_reminders').select('*').eq('id', id).eq('status', 'sent').maybeSingle();
+    if (!reminder || (reminder.creator_telegram_id !== ctx.from.id && reminder.recipient_telegram_id !== ctx.from.id)) return ctx.reply('هذا التذكير منتهٍ.');
+    const { error } = await db.from('reminder_checkins').upsert({ reminder_id: id, telegram_id: ctx.from.id }, { onConflict: 'reminder_id,telegram_id' });
+    if (error) throw error;
+    return ctx.reply('تم تسجيل حضورك ✅ يلا ابدأوا الجلسة من «⏱️ جلسة دراسة».', menu);
+  }
+  if (data.startsWith('feedback:')) {
+    const id = Number(data.split(':')[1]);
+    const { data: row } = await db.from('study_sessions').select('*').eq('id', id).eq('status', 'completed').maybeSingle();
+    if (!row || (row.starter_telegram_id !== ctx.from.id && row.recipient_telegram_id !== ctx.from.id)) return ctx.reply('التقييم غير متاح.');
+    ctx.session = { flow: 'session_feedback', sessionId: id, feedback: {} };
+    return ctx.reply('هل كان شريكك حاضر بالجلسة؟', buttons([['نعم ✅', 'feedback_present:yes'], ['لا ❌', 'feedback_present:no']]));
+  }
+  if (data.startsWith('feedback_present:') && ctx.session?.flow === 'session_feedback') {
+    ctx.session.feedback.partner_present = data.endsWith(':yes');
+    return ctx.reply('قيّم التزامه بالجلسة:', buttons([['1', 'feedback_commitment:1'], ['2', 'feedback_commitment:2'], ['3', 'feedback_commitment:3'], ['4', 'feedback_commitment:4'], ['5', 'feedback_commitment:5']]));
+  }
+  if (data.startsWith('feedback_commitment:') && ctx.session?.flow === 'session_feedback') {
+    ctx.session.feedback.commitment = Number(data.split(':')[1]);
+    return ctx.reply('شكد كانت الجلسة مفيدة؟', buttons([['1', 'feedback_usefulness:1'], ['2', 'feedback_usefulness:2'], ['3', 'feedback_usefulness:3'], ['4', 'feedback_usefulness:4'], ['5', 'feedback_usefulness:5']]));
+  }
+  if (data.startsWith('feedback_usefulness:') && ctx.session?.flow === 'session_feedback') {
+    const usefulness = Number(data.split(':')[1]);
+    const { error } = await db.from('session_feedback').upsert({ study_session_id: ctx.session.sessionId, reviewer_telegram_id: ctx.from.id, ...ctx.session.feedback, usefulness }, { onConflict: 'study_session_id,reviewer_telegram_id' });
+    if (error) throw error;
+    ctx.session = {};
+    return ctx.reply('شكراً، سجّلنا تقييم الجلسة ⭐', menu);
   }
   if (data.startsWith('done:')) {
     const id = Number(data.split(':')[1]);
     const { data: task } = await db.from('study_tasks').select('connection_id').eq('id', id).maybeSingle();
     const ownConnections = await acceptedConnections(ctx.from.id);
     if (!task || !ownConnections.some((c) => c.id === task.connection_id)) return ctx.reply('هذه المهمة غير متاحة.');
-    await db.from('study_tasks').update({ is_done: true }).eq('id', id);
+    await db.from('study_tasks').update({ is_done: true, completed_by_telegram_id: ctx.from.id, completed_at: new Date().toISOString() }).eq('id', id);
+    const partnerId = ownConnections.find((c) => c.id === task.connection_id).requester_telegram_id === ctx.from.id ? ownConnections.find((c) => c.id === task.connection_id).recipient_telegram_id : ownConnections.find((c) => c.id === task.connection_id).requester_telegram_id;
+    const me = await profile(ctx.from.id);
+    await bot.telegram.sendMessage(partnerId, `✅ ${me.pseudonym} أنجز/ت مهمة مشتركة. شوفوا «📋 مهامنا» حتى تتابعون التقدم.`, menu);
     return ctx.reply('تم تعليم المهمة كمنجزة ✅');
   }
   return next();
@@ -423,6 +673,9 @@ bot.on('text', async (ctx) => {
   if (text === '📋 مهامنا') return showTasks(ctx);
   if (text === '➕ مهمة') return choosePartner(ctx, 'task', 'لمن تريد إضافة هذه المهمة المشتركة؟');
   if (text === '⏱️ جلسة دراسة') return choosePartner(ctx, 'session', 'اختَر الشريك ثم ابدأ جلسة الدراسة:');
+  if (text === '⚡ جاهز أدرس هسة') return choosePartner(ctx, 'ready', 'منو تريد تناديه لجلسة سريعة هسه؟');
+  if (text === '🔔 ضبط تذكير') return choosePartner(ctx, 'reminder', 'اختَر الشريك ثم حدّد وقت التذكير:');
+  if (text === '📊 تقريرنا') return showWeeklyReport(ctx);
   if (text === '⭐ قيّم شريكاً') return ratePartner(ctx);
   if (text === '🗑️ حذف حسابي') { ctx.session = { flow: 'delete' }; return ctx.reply('هذا يحذف ملفك وطلباتك وتقييماتك نهائياً. اكتب احذف للتأكيد.'); }
   if (ctx.session?.flow === 'delete') {
@@ -440,6 +693,18 @@ bot.on('text', async (ctx) => {
   if (ctx.session?.flow === 'message') {
     await sendRelay(ctx, ctx.session.connectionId, ctx.session.recipientId, text);
     ctx.session = {}; return ctx.reply('تم إرسال رسالتك ✉️', menu);
+  }
+  if (ctx.session?.flow === 'session_reflection') return saveSessionReflection(ctx, ctx.session.sessionId, text);
+  if (ctx.session?.flow === 'reminder') {
+    const reminderAt = nextBaghdadTime(text);
+    if (!reminderAt) return ctx.reply('اكتب الوقت هكذا HH:MM، مثال: 20:00.');
+    const { error } = await db.from('study_reminders').insert({ connection_id: ctx.session.connectionId, creator_telegram_id: ctx.from.id, recipient_telegram_id: ctx.session.recipientId, reminder_at: reminderAt.toISOString() });
+    if (error) throw error;
+    const partner = await profile(ctx.session.recipientId);
+    const shownTime = new Intl.DateTimeFormat('ar-IQ', { timeZone: 'Asia/Baghdad', hour: 'numeric', minute: '2-digit' }).format(reminderAt);
+    ctx.session = {};
+    await bot.telegram.sendMessage(partner.telegram_id, `🔔 تم ضبط تذكير دراسة مشترك الساعة ${shownTime} بتوقيت بغداد. راح توصلكم رسالة بالحضور وقت الموعد.`, menu);
+    return ctx.reply(`تم ضبط التذكير الساعة ${shownTime} بتوقيت بغداد ✅`, menu);
   }
   if (ctx.session?.flow === 'reveal_identity') {
     if (text !== 'أكشف' && text !== 'اكشف') return ctx.reply('ما تغير شيء. اكتب أكشف إذا تريد تأكيد كشف اسمك.');
@@ -518,12 +783,15 @@ async function notifyExistingStudents() {
 
 healthServer.listen(port, '0.0.0.0', () => console.log(`Health check listening on :${port}`));
 let shuttingDown = false;
+let automationTimer;
 
 async function startBot() {
   try {
     await bot.launch();
     console.log('Twinny bot is running with long polling.');
     await notifyExistingStudents();
+    await processStudyAutomation().catch((error) => console.error('Study automation failed:', error.message));
+    if (!automationTimer) automationTimer = setInterval(() => processStudyAutomation().catch((error) => console.error('Study automation failed:', error.message)), 60_000);
   } catch (error) {
     console.error('Telegram polling stopped; retrying in 30 seconds:', error.message);
     if (!shuttingDown) setTimeout(startBot, 30_000);

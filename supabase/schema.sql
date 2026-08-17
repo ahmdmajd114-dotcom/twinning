@@ -94,8 +94,63 @@ create table if not exists study_sessions (
   check (ended_at is null or ended_at > started_at)
 );
 
+-- Shared study room: invite, timed session, reflections and follow-up feedback.
+alter table study_sessions add column if not exists recipient_telegram_id bigint references profiles(telegram_id) on delete cascade;
+alter table study_sessions add column if not exists planned_minutes smallint check (planned_minutes in (25, 50));
+alter table study_sessions add column if not exists status text not null default 'pending' check (status in ('pending', 'active', 'awaiting_reflection', 'completed', 'declined', 'expired'));
+alter table study_sessions add column if not exists accepted_at timestamptz;
+alter table study_sessions add column if not exists ends_at timestamptz;
+alter table study_sessions add column if not exists starter_reflection text;
+alter table study_sessions add column if not exists recipient_reflection text;
+alter table study_sessions add column if not exists starter_completed_at timestamptz;
+alter table study_sessions add column if not exists recipient_completed_at timestamptz;
+alter table study_sessions add column if not exists completed_at timestamptz;
+
+create table if not exists session_feedback (
+  id bigint generated always as identity primary key,
+  study_session_id bigint not null references study_sessions(id) on delete cascade,
+  reviewer_telegram_id bigint not null references profiles(telegram_id) on delete cascade,
+  partner_present boolean not null,
+  commitment smallint not null check (commitment between 1 and 5),
+  usefulness smallint not null check (usefulness between 1 and 5),
+  created_at timestamptz not null default now(),
+  unique (study_session_id, reviewer_telegram_id)
+);
+
+-- A planned time sends both partners a check-in; this powers attendance and punctuality.
+create table if not exists study_reminders (
+  id bigint generated always as identity primary key,
+  connection_id bigint not null references connections(id) on delete cascade,
+  creator_telegram_id bigint not null references profiles(telegram_id) on delete cascade,
+  recipient_telegram_id bigint not null references profiles(telegram_id) on delete cascade,
+  reminder_at timestamptz not null,
+  status text not null default 'pending' check (status in ('pending', 'sent', 'closed', 'cancelled')),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists reminder_checkins (
+  id bigint generated always as identity primary key,
+  reminder_id bigint not null references study_reminders(id) on delete cascade,
+  telegram_id bigint not null references profiles(telegram_id) on delete cascade,
+  checked_in_at timestamptz not null default now(),
+  unique (reminder_id, telegram_id)
+);
+
+create table if not exists weekly_report_sends (
+  id bigint generated always as identity primary key,
+  connection_id bigint not null references connections(id) on delete cascade,
+  week_start date not null,
+  sent_at timestamptz not null default now(),
+  unique (connection_id, week_start)
+);
+
+alter table study_tasks add column if not exists completed_by_telegram_id bigint references profiles(telegram_id) on delete set null;
+alter table study_tasks add column if not exists completed_at timestamptz;
+
 create index if not exists profiles_match_index on profiles (gender, city, university, academic_year) where is_active;
 create index if not exists connections_participant_index on connections (requester_telegram_id, recipient_telegram_id, status);
 create index if not exists messages_connection_index on messages (connection_id, created_at desc);
 create index if not exists identity_disclosures_recipient_index on identity_disclosures (recipient_telegram_id);
 create index if not exists study_tasks_connection_index on study_tasks (connection_id, is_done);
+create index if not exists study_sessions_connection_status_index on study_sessions (connection_id, status, created_at desc);
+create index if not exists study_reminders_pending_index on study_reminders (status, reminder_at);
