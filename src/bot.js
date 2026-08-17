@@ -73,7 +73,10 @@ function aiProfile(profile, id) {
   };
 }
 async function rerankWithGroq(me, candidates) {
-  if (!process.env.GROQ_API_KEY || candidates.length < 2) return candidates;
+  if (!process.env.GROQ_API_KEY || candidates.length < 2) {
+    console.info(`Groq skipped: ${process.env.GROQ_API_KEY ? 'fewer than 2 candidates' : 'GROQ_API_KEY is not configured'}`);
+    return candidates;
+  }
   const input = {
     student: aiProfile(me, 'student'),
     candidates: candidates.map((candidate, index) => aiProfile(candidate, `c${index + 1}`))
@@ -106,6 +109,7 @@ async function rerankWithGroq(me, candidates) {
       }
     }
     if (!ordered.length) throw new Error('Groq returned no usable ranking');
+    console.info(`Groq used successfully: re-ranked ${ordered.length} of ${candidates.length} candidates with ${process.env.GROQ_MODEL || 'openai/gpt-oss-20b'}`);
     return [...ordered, ...candidates.filter((candidate) => !ordered.includes(candidate))];
   } catch (error) {
     console.error('Groq re-ranking failed; using deterministic ranking:', error.message);
