@@ -88,6 +88,16 @@ function majorKey(value) {
 function hasCompatibleMajor(left, right) { return majorKey(left) === majorKey(right); }
 function countryKey(value = '') { return normalise(value); }
 function studyFocusKey(value = '') { return normalise(value); }
+function meaningfulWords(value = '') {
+  return String(value).toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).map(normalise).filter((word) => word.length >= 3);
+}
+function hasSharedStudyGoal(left, right) {
+  const leftWords = new Set(meaningfulWords(left));
+  return meaningfulWords(right).some((word) => leftWords.has(word));
+}
+function compatibleChoice(left, right, flexible = 'both') {
+  return Boolean(left && right && (left === right || left === flexible || right === flexible));
+}
 function sharedValues(left, right) {
   const leftValues = Array.isArray(left) ? left : [];
   const rightValues = new Set(Array.isArray(right) ? right : []);
@@ -203,6 +213,7 @@ function score(me, candidate) {
   if (hasCompatibleMajor(me.major, candidate.major)) value += 8;
   if (me.academic_year === candidate.academic_year) value += 7;
   if (me.study_focus && candidate.study_focus && studyFocusKey(me.study_focus) === studyFocusKey(candidate.study_focus)) value += 8;
+  if (hasSharedStudyGoal(me.goal, candidate.goal)) value += 7;
   const sharedDays = sharedValues(me.available_days, candidate.available_days).length;
   const sharedSlots = sharedValues(me.available_slots, candidate.available_slots).length;
   if (sharedDays) value += Math.min(12, sharedDays * 4);
@@ -214,7 +225,7 @@ function score(me, candidate) {
   if (me.partner_preference && me.partner_preference === candidate.partner_preference) value += 3;
   if (me.sessions_per_week && Math.abs(me.sessions_per_week - candidate.sessions_per_week) <= 1) value += 3;
   if (me.seriousness && Math.abs(me.seriousness - candidate.seriousness) <= 1) value += 2;
-  if (me.call_preference && candidate.call_preference && (me.call_preference === candidate.call_preference || me.call_preference === 'both' || candidate.call_preference === 'both')) value += 4;
+  if (compatibleChoice(me.call_preference, candidate.call_preference)) value += 4;
   if (me.aloud_reading_preference && candidate.aloud_reading_preference && me.aloud_reading_preference === candidate.aloud_reading_preference) value += 3;
   value += Math.round(((candidate.reliability ?? 50) - 50) * 0.12);
   return Math.min(value, 100);
@@ -324,13 +335,67 @@ bot.command('rate', ratePartner);
 
 async function findMatches(ctx) {
   const me = await ensureRegistered(ctx); if (!me) return;
+  return ctx.reply('شلون تحب تبحث عن شريك دراسة؟', Markup.inlineKeyboard([
+    [Markup.button.callback('🤖 اختيار بواسطة Twinny', 'match_mode:bot')],
+    [Markup.button.callback('👥 عرض كل المتاحين بلا شريك', 'match_mode:all')],
+    [Markup.button.callback('⚙️ بحث بمعايير أحددها', 'match_mode:criteria')]
+  ]));
+}
+
+const MATCH_CRITERIA = [
+  ['university', 'الجامعة / المعهد'], ['age', 'العمر (فرق سنتين أو أقل)'], ['city', 'المحافظة'],
+  ['academic_year', 'المرحلة أو حالة التخرج'], ['goal', 'الغاية الدراسية'], ['availability', 'الأيام والأوقات'],
+  ['learning_style', 'أسلوب التعلّم'], ['study_mode', 'نمط الدراسة'], ['partner_preference', 'ما تريده من الشريك'],
+  ['seriousness', 'مستوى الجدية'], ['call', 'تفضيل المكالمة'], ['aloud', 'القراءة بصوت عالٍ']
+];
+
+function renderMatchCriteria(ctx, edit = false) {
+  const selected = new Set(ctx.session?.criteria || []);
+  const items = [
+    ...MATCH_CRITERIA.map(([id, label]) => [`${selected.has(id) ? '✅ ' : ''}${label}`, `match_criterion:${id}`]),
+    ['🔎 اعرض النتائج', 'match_criteria_done'], ['تصفير الاختيارات', 'match_criteria_clear']
+  ];
+  const text = `اختَر المعايير التي تريدها. تگدر تختار كلها أو بعضها؛ التخصص والجنس يبقون شرط أمان ثابت.\n\n${selected.size ? `المختار: ${[...selected].map((id) => MATCH_CRITERIA.find(([key]) => key === id)?.[1]).join('، ')}` : 'ما مختار معيار بعد — اضغط المعايير ثم «اعرض النتائج».'}`;
+  const markup = grid(items);
+  if (!edit) return ctx.reply(text, markup);
+  return ctx.editMessageText(text, markup).catch(() => ctx.reply(text, markup));
+}
+
+function matchesCriteria(me, candidate, criteria) {
+  return criteria.every((criterion) => {
+    if (criterion === 'university') return universityKey(me.university) === universityKey(candidate.university);
+    if (criterion === 'age') return Math.abs(ageFrom(me.birth_year) - ageFrom(candidate.birth_year)) <= 2;
+    if (criterion === 'city') return countryKey(me.country || 'العراق') === countryKey(candidate.country || 'العراق') && governorateKey(me.city) === governorateKey(candidate.city);
+    if (criterion === 'academic_year') return me.academic_year === candidate.academic_year;
+    if (criterion === 'goal') return hasSharedStudyGoal(me.goal, candidate.goal) || (me.study_focus && candidate.study_focus && studyFocusKey(me.study_focus) === studyFocusKey(candidate.study_focus));
+    if (criterion === 'availability') return sharedValues(me.available_days, candidate.available_days).length > 0 && sharedValues(me.available_slots, candidate.available_slots).length > 0;
+    if (criterion === 'learning_style') return me.learning_style === candidate.learning_style;
+    if (criterion === 'study_mode') return compatibleChoice(me.study_mode, candidate.study_mode);
+    if (criterion === 'partner_preference') return compatibleChoice(me.partner_preference, candidate.partner_preference);
+    if (criterion === 'seriousness') return me.seriousness && candidate.seriousness && Math.abs(me.seriousness - candidate.seriousness) <= 1;
+    if (criterion === 'call') return compatibleChoice(me.call_preference, candidate.call_preference);
+    if (criterion === 'aloud') return me.aloud_reading_preference && candidate.aloud_reading_preference && me.aloud_reading_preference === candidate.aloud_reading_preference;
+    return true;
+  });
+}
+
+async function availablePeople(me, { onlyWithoutPartner = false, criteria = [] } = {}) {
   const { data: people, error } = await db.from('profiles').select('*').eq('gender', me.gender).eq('is_active', true).neq('telegram_id', me.telegram_id);
   if (error) throw error;
-  const sameMajorPeople = people.filter((person) => hasCompatibleMajor(me.major, person.major));
-  const enrichedPeople = await Promise.all(sameMajorPeople.map(enrichReliability));
-  const deterministic = enrichedPeople.sort((a, b) => score(me, b) - score(me, a)).slice(0, 10);
-  const candidates = (await rerankWithGroq(me, deterministic)).slice(0, 3);
-  if (!candidates.length) return ctx.reply('حالياً ماكو طالب من نفس الجنس والتخصص الدراسي. جرّب لاحقاً، واحنا نوسع المجتمع يومياً.', menu);
+  let candidates = people.filter((person) => hasCompatibleMajor(me.major, person.major));
+  if (onlyWithoutPartner) {
+    const { data: connections, error: connectionsError } = await db.from('connections').select('requester_telegram_id, recipient_telegram_id').eq('status', 'accepted');
+    if (connectionsError) throw connectionsError;
+    const partnered = new Set((connections || []).flatMap((connection) => [String(connection.requester_telegram_id), String(connection.recipient_telegram_id)]));
+    candidates = candidates.filter((person) => !partnered.has(String(person.telegram_id)));
+  }
+  candidates = candidates.filter((person) => matchesCriteria(me, person, criteria));
+  return Promise.all(candidates.map(enrichReliability));
+}
+
+async function sendCandidateCards(ctx, me, candidates, { heading, showScore = false } = {}) {
+  if (!candidates.length) return ctx.reply('ما لكينا أحد يطابق هالاختيارات حالياً. جرّب تقلل بعض المعايير أو ارجع لاحقاً.', menu);
+  if (heading) await ctx.reply(heading);
   for (const person of candidates) {
     const { data: ratings } = await db.from('ratings').select('stars, commitment').eq('reviewed_telegram_id', person.telegram_id);
     const average = ratings?.length ? (ratings.reduce((sum, r) => sum + r.stars, 0) / ratings.length).toFixed(1) : 'جديد';
@@ -341,9 +406,8 @@ async function findMatches(ctx) {
       ? `\n📅 الجلسات: ${person.sessions_per_week} بالأسبوع · ${labels[person.session_duration] || `${person.session_duration} دقيقة`}\n💻 نمط الدراسة: ${labels[person.study_mode] || person.study_mode}\n🤝 يريد من الشريك: ${person.partner_preference === 'both' ? 'الاثنين' : labels[person.partner_preference]}\n🎥 المكالمة: ${labels[person.call_preference] || 'لم يحدّد'}\n🗣 القراءة بصوت عالٍ: ${labels[person.aloud_reading_preference] || 'لم يحدّد'}\n⭐ مستوى الجدية: ${'⭐'.repeat(person.seriousness)}`
       : '\n📝 لم يحدّث تفضيلات الدراسة بعد.';
     const availability = availabilitySummary(person) ? `\n🗓 التوفر: ${availabilitySummary(person)}` : '\n🗓 لم يحدّد أيامه وأوقاته بعد.';
-    const aiReason = person.aiReason ? `\n🤖 سبب الاقتراح: ${person.aiReason}` : '';
     const rating = average === 'جديد' ? 'جديد — لا توجد تقييمات بعد' : `${average} / 5 · ${ratings.length} تقييم · ملتزم: ${committed}`;
-    await ctx.reply(`👤 شريك دراسة مقترح\n━━━━━━━━━━━━\n🏷 الاسم الظاهر: ${person.pseudonym}\n🎓 التخصص والمرحلة: ${person.major} · ${person.academic_year}\n🏛 الجامعة: ${person.university}\n📍 المكان: ${person.country || 'العراق'} · ${person.city}${studyFocus}${grades}\n━━━━━━━━━━━━\n⏰ وقت الدراسة: ${labels[person.study_time] || person.study_time}\n🧠 أسلوب الدراسة: ${labels[person.learning_style]}${preferences}${availability}\n🏅 مؤشر الالتزام الفعلي: ${person.reliability}٪\n━━━━━━━━━━━━\n✨ نسبة التوافق: ${score(me, person)}٪${aiReason}\n⭐ التقييم: ${rating}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
+    await ctx.reply(`👤 شريك دراسة\n━━━━━━━━━━━━\n🏷 الاسم الظاهر: ${person.pseudonym}\n🎓 التخصص والمرحلة: ${person.major} · ${person.academic_year}\n🏛 الجامعة: ${person.university}\n📍 المكان: ${person.country || 'العراق'} · ${person.city}${studyFocus}${grades}\n━━━━━━━━━━━━\n⏰ وقت الدراسة: ${labels[person.study_time] || person.study_time}\n🧠 أسلوب الدراسة: ${labels[person.learning_style]}${preferences}${availability}\n🏅 مؤشر الالتزام الفعلي: ${person.reliability}٪${showScore ? `\n━━━━━━━━━━━━\n✨ نسبة التوافق: ${score(me, person)}٪` : ''}\n⭐ التقييم: ${rating}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
   }
 }
 
@@ -623,6 +687,44 @@ async function processStudyAutomation() {
 bot.on('callback_query', async (ctx, next) => {
   const data = ctx.callbackQuery.data;
   await ctx.answerCbQuery();
+  if (data === 'match_mode:bot') {
+    const me = await ensureRegistered(ctx); if (!me) return;
+    const candidates = await availablePeople(me);
+    candidates.sort((left, right) => score(me, right) - score(me, left));
+    return sendCandidateCards(ctx, me, candidates.slice(0, 10), { heading: '🤖 أفضل 10 اقتراحات من Twinny حسب الجامعة، العمر، المرحلة/التخرج، الهدف، التوفر، الالتزام وبقية تفضيلات الدراسة:', showScore: true });
+  }
+  if (data === 'match_mode:all') {
+    const me = await ensureRegistered(ctx); if (!me) return;
+    const candidates = await availablePeople(me, { onlyWithoutPartner: true });
+    candidates.sort((left, right) => score(me, right) - score(me, left));
+    return sendCandidateCards(ctx, me, candidates, { heading: `👥 كل المتاحين حالياً بلا شريك: ${candidates.length} طالب/ة.`, showScore: false });
+  }
+  if (data === 'match_mode:criteria') {
+    const me = await ensureRegistered(ctx); if (!me) return;
+    ctx.session = { flow: 'match_criteria', criteria: [] };
+    return renderMatchCriteria(ctx);
+  }
+  if (data.startsWith('match_criterion:') && ctx.session?.flow === 'match_criteria') {
+    const criterion = data.split(':')[1];
+    if (!MATCH_CRITERIA.some(([id]) => id === criterion)) return ctx.reply('هذا المعيار غير متاح.');
+    const selected = new Set(ctx.session.criteria || []);
+    selected.has(criterion) ? selected.delete(criterion) : selected.add(criterion);
+    ctx.session.criteria = [...selected];
+    return renderMatchCriteria(ctx, true);
+  }
+  if (data === 'match_criteria_clear' && ctx.session?.flow === 'match_criteria') {
+    ctx.session.criteria = [];
+    return renderMatchCriteria(ctx, true);
+  }
+  if (data === 'match_criteria_done' && ctx.session?.flow === 'match_criteria') {
+    const me = await ensureRegistered(ctx); if (!me) return;
+    const criteria = ctx.session.criteria || [];
+    ctx.session = {};
+    const candidates = await availablePeople(me, { criteria });
+    candidates.sort((left, right) => score(me, right) - score(me, left));
+    const selected = criteria.length ? criteria.map((id) => MATCH_CRITERIA.find(([key]) => key === id)?.[1]).join('، ') : 'بدون معايير إضافية';
+    return sendCandidateCards(ctx, me, candidates, { heading: `⚙️ نتائج البحث حسب: ${selected}\nعدد النتائج: ${candidates.length}`, showScore: false });
+  }
   const registrationButton = /^(gender|year|time|style|sessions|duration|mode|preference|seriousness|availability_day|availability_slot|call_pref|aloud_pref):/.test(data) || ['year_custom', 'availability_days_done', 'availability_slots_done'].includes(data);
   if (registrationButton && !ctx.session?.form) {
     return ctx.reply('انتهت جلسة التسجيل السابقة بسبب إعادة تشغيل البوت. اكتب /start ونبدأ من جديد 👋');
