@@ -91,9 +91,26 @@ function studyFocusKey(value = '') { return normalise(value); }
 function meaningfulWords(value = '') {
   return String(value).toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).map(normalise).filter((word) => word.length >= 3);
 }
+function studyTags(value = '') {
+  const text = normalise(value);
+  const groups = {
+    exams: ['امتحان', 'فاينل', 'نهائي', 'وزاري', 'ميد', 'اختبار'],
+    board: ['بورد', 'اقامه', 'زماله', 'residency'],
+    equivalency: ['معادله', 'usmle', 'plab', 'ifom'],
+    routine: ['التزام', 'روتين', 'متابعه', 'جدول', 'استمراريه'],
+    revision: ['مراجعه', 'ريفجن', 'تلخيص'],
+    questions: ['اسئله', 'mcq', 'تطبيق', 'حل'],
+    assignments: ['واجب', 'مشروع', 'بحث', 'تقرير'],
+    discussion: ['نقاش', 'مناقشه', 'شرح'],
+    reading: ['قراءه', 'محاضره', 'ملازم']
+  };
+  return new Set(Object.entries(groups).filter(([, words]) => words.some((word) => text.includes(normalise(word)))).map(([tag]) => tag));
+}
 function hasSharedStudyGoal(left, right) {
+  const leftTags = studyTags(left); const rightTags = studyTags(right);
+  if ([...leftTags].some((tag) => rightTags.has(tag))) return true;
   const leftWords = new Set(meaningfulWords(left));
-  return meaningfulWords(right).some((word) => leftWords.has(word));
+  return meaningfulWords(right).some((word) => [...leftWords].some((other) => word === other || (word.length >= 5 && other.length >= 5 && (word.startsWith(other.slice(0, 4)) || other.startsWith(word.slice(0, 4))))));
 }
 function compatibleChoice(left, right, flexible = 'both') {
   return Boolean(left && right && (left === right || left === flexible || right === flexible));
@@ -393,7 +410,11 @@ async function availablePeople(me, { onlyWithoutPartner = false, criteria = [] }
   return Promise.all(candidates.map(enrichReliability));
 }
 
-async function sendCandidateCards(ctx, me, candidates, { heading, showScore = false } = {}) {
+function matchedCriteriaCount(me, candidate, criteria = []) {
+  return criteria.filter((criterion) => matchesCriteria(me, candidate, [criterion])).length;
+}
+
+async function sendCandidateCards(ctx, me, candidates, { heading, showScore = false, criteria = [] } = {}) {
   if (!candidates.length) return ctx.reply('ما لكينا أحد يطابق هالاختيارات حالياً. جرّب تقلل بعض المعايير أو ارجع لاحقاً.', menu);
   if (heading) await ctx.reply(heading);
   for (const person of candidates) {
@@ -407,7 +428,8 @@ async function sendCandidateCards(ctx, me, candidates, { heading, showScore = fa
       : '\n📝 لم يحدّث تفضيلات الدراسة بعد.';
     const availability = availabilitySummary(person) ? `\n🗓 التوفر: ${availabilitySummary(person)}` : '\n🗓 لم يحدّد أيامه وأوقاته بعد.';
     const rating = average === 'جديد' ? 'جديد — لا توجد تقييمات بعد' : `${average} / 5 · ${ratings.length} تقييم · ملتزم: ${committed}`;
-    await ctx.reply(`👤 شريك دراسة\n━━━━━━━━━━━━\n🏷 الاسم الظاهر: ${person.pseudonym}\n🎓 التخصص والمرحلة: ${person.major} · ${person.academic_year}\n🏛 الجامعة: ${person.university}\n📍 المكان: ${person.country || 'العراق'} · ${person.city}${studyFocus}${grades}\n━━━━━━━━━━━━\n⏰ وقت الدراسة: ${labels[person.study_time] || person.study_time}\n🧠 أسلوب الدراسة: ${labels[person.learning_style]}${preferences}${availability}\n🏅 مؤشر الالتزام الفعلي: ${person.reliability}٪${showScore ? `\n━━━━━━━━━━━━\n✨ نسبة التوافق: ${score(me, person)}٪` : ''}\n⭐ التقييم: ${rating}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
+    const criteriaMatch = criteria.length ? `\n🧩 يطابق ${matchedCriteriaCount(me, person, criteria)}/${criteria.length} من المعايير التي اخترتها` : '';
+    await ctx.reply(`👤 شريك دراسة\n━━━━━━━━━━━━\n🏷 الاسم الظاهر: ${person.pseudonym}\n🎓 التخصص والمرحلة: ${person.major} · ${person.academic_year}\n🏛 الجامعة: ${person.university}\n📍 المكان: ${person.country || 'العراق'} · ${person.city}${studyFocus}${grades}\n━━━━━━━━━━━━\n⏰ وقت الدراسة: ${labels[person.study_time] || person.study_time}\n🧠 أسلوب الدراسة: ${labels[person.learning_style]}${preferences}${availability}\n🏅 مؤشر الالتزام الفعلي: ${person.reliability}٪${criteriaMatch}${showScore ? `\n━━━━━━━━━━━━\n✨ نسبة التوافق: ${score(me, person)}٪` : ''}\n⭐ التقييم: ${rating}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
   }
 }
 
@@ -734,9 +756,14 @@ bot.on('callback_query', async (ctx, next) => {
     const criteria = ctx.session.criteria || [];
     ctx.session = {};
     const candidates = await availablePeople(me, { criteria });
-    candidates.sort((left, right) => score(me, right) - score(me, left));
     const selected = criteria.length ? criteria.map((id) => MATCH_CRITERIA.find(([key]) => key === id)?.[1]).join('، ') : 'بدون معايير إضافية';
-    return sendCandidateCards(ctx, me, candidates, { heading: `⚙️ نتائج البحث حسب: ${selected}\nعدد النتائج: ${candidates.length}`, showScore: false });
+    if (candidates.length) {
+      candidates.sort((left, right) => score(me, right) - score(me, left));
+      return sendCandidateCards(ctx, me, candidates, { heading: `⚙️ تطابق كامل حسب: ${selected}\nعدد النتائج: ${candidates.length}`, showScore: false, criteria });
+    }
+    const closest = await availablePeople(me);
+    closest.sort((left, right) => matchedCriteriaCount(me, right, criteria) - matchedCriteriaCount(me, left, criteria) || score(me, right) - score(me, left));
+    return sendCandidateCards(ctx, me, closest.slice(0, 10), { heading: `ماكو تطابق كامل لكل المعايير المختارة، لكن هذني أقرب 10 طلاب. راح تشوف تحت كل ملف شكد من معاييرك يطابق.\n\nبحثك: ${selected}`, showScore: true, criteria });
   }
   const registrationButton = /^(gender|year|time|style|sessions|duration|mode|preference|seriousness|availability_day|availability_slot|call_pref|aloud_pref):/.test(data) || ['year_custom', 'availability_days_done', 'availability_slots_done'].includes(data);
   if (registrationButton && !ctx.session?.form) {
