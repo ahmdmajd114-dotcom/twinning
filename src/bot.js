@@ -68,12 +68,21 @@ function universityKey(value) {
 }
 function majorKey(value) {
   const key = normalise(value);
-  if (key.includes('طب')) return 'طب';
+  if (key.includes('طباسنان') || key.includes('اسنان')) return 'طباسنان';
   if (key.includes('صيدل')) return 'صيدله';
-  if (key.includes('اسنان')) return 'طباسنان';
+  if (key.includes('طببيطري') || key.includes('بيطري')) return 'طببيطري';
+  if (key.includes('علومطبي') || key.includes('تقنياتطبي')) return 'علومطبيه';
+  if (key.includes('طب') || key.includes('بشري')) return 'طبعام';
   if (key.includes('تمريض')) return 'تمريض';
-  return key;
+  if (key.includes('هندس')) return key === 'هندسه' ? 'هندسه' : `هندسه:${key.replace('هندسه', '')}`;
+  if (key.includes('حاسوب') || key.includes('تقنيه') || key.includes('برمج')) return 'حاسوبوتقنيه';
+  if (key.includes('اداره') || key.includes('اقتصاد') || key.includes('محاسب') || key.includes('مالي')) return 'ادارهواقتصاد';
+  if (key.includes('قانون')) return 'قانون';
+  if (key.includes('تربي') || key.includes('تعليم')) return 'تربيه';
+  if (key.includes('زراع')) return 'زراعه';
+  return `custom:${key}`;
 }
+function hasCompatibleMajor(left, right) { return majorKey(left) === majorKey(right); }
 function countryKey(value = '') { return normalise(value); }
 function studyFocusKey(value = '') { return normalise(value); }
 function sharedValues(left, right) {
@@ -186,7 +195,7 @@ function score(me, candidate) {
   if (sameCountry) value += 5;
   if (sameCountry && governorateKey(me.city) === governorateKey(candidate.city)) value += 7;
   if (universityKey(me.university) === universityKey(candidate.university)) value += 9;
-  if (majorKey(me.major) === majorKey(candidate.major)) value += 8;
+  if (hasCompatibleMajor(me.major, candidate.major)) value += 8;
   if (me.academic_year === candidate.academic_year) value += 7;
   if (me.study_focus && candidate.study_focus && studyFocusKey(me.study_focus) === studyFocusKey(candidate.study_focus)) value += 8;
   const sharedDays = sharedValues(me.available_days, candidate.available_days).length;
@@ -310,10 +319,11 @@ async function findMatches(ctx) {
   const me = await ensureRegistered(ctx); if (!me) return;
   const { data: people, error } = await db.from('profiles').select('*').eq('gender', me.gender).eq('is_active', true).neq('telegram_id', me.telegram_id);
   if (error) throw error;
-  const enrichedPeople = await Promise.all(people.map(enrichReliability));
+  const sameMajorPeople = people.filter((person) => hasCompatibleMajor(me.major, person.major));
+  const enrichedPeople = await Promise.all(sameMajorPeople.map(enrichReliability));
   const deterministic = enrichedPeople.sort((a, b) => score(me, b) - score(me, a)).slice(0, 10);
   const candidates = (await rerankWithGroq(me, deterministic)).slice(0, 3);
-  if (!candidates.length) return ctx.reply('حالياً ماكو طالب مناسب ضمن نفس الجنس. جرّب لاحقاً، واحنا نوسع المجتمع يومياً.', menu);
+  if (!candidates.length) return ctx.reply('حالياً ماكو طالب من نفس الجنس والتخصص الدراسي. جرّب لاحقاً، واحنا نوسع المجتمع يومياً.', menu);
   for (const person of candidates) {
     const { data: ratings } = await db.from('ratings').select('stars, commitment').eq('reviewed_telegram_id', person.telegram_id);
     const average = ratings?.length ? (ratings.reduce((sum, r) => sum + r.stars, 0) / ratings.length).toFixed(1) : 'جديد';
