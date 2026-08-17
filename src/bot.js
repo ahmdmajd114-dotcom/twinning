@@ -151,7 +151,7 @@ async function showUpdateMenu(ctx) {
     [Markup.button.callback('الجامعة / المعهد', 'edit:university'), Markup.button.callback('التخصص', 'edit:major')],
     [Markup.button.callback('المرحلة الدراسية', 'edit:academic_year'), Markup.button.callback('وقت الدراسة', 'edit:study_time')],
     [Markup.button.callback('أسلوب التعلّم', 'edit:learning_style'), Markup.button.callback('الهدف الدراسي', 'edit:goal')],
-    [Markup.button.callback('شنو تدرس/تحضّر؟', 'edit:study_focus')],
+    [Markup.button.callback('شنو تدرس/تحضّر؟', 'edit:study_focus'), Markup.button.callback('التقديرات السابقة', 'edit:previous_grades')],
     [Markup.button.callback('تفضيلات التوافق', 'edit:preferences'), Markup.button.callback('الجنس', 'edit:gender')],
     [Markup.button.callback('سنة الميلاد', 'edit:birth_year')]
   ]));
@@ -189,7 +189,7 @@ bot.start(async (ctx) => {
 
 bot.command('profile', async (ctx) => {
   const me = await ensureRegistered(ctx); if (!me) return;
-  await ctx.reply(`ملفك\nالاسم الظاهر: ${me.pseudonym}\n${me.major} · ${me.academic_year}\n${me.university}، ${me.city}${me.study_focus ? `\nتدرس/تحضّر: ${me.study_focus}` : ''}\nوقت الدراسة: ${labels[me.study_time]}\nأسلوبك: ${labels[me.learning_style]}${me.sessions_per_week ? `\n${me.sessions_per_week} جلسات/أسبوع · ${labels[me.study_mode]}` : '\n📝 حدّث بياناتك حتى نحسن التوافق.'}`, menu);
+  await ctx.reply(`ملفك\nالاسم الظاهر: ${me.pseudonym}\n${me.major} · ${me.academic_year}\n${me.university}، ${me.city}${me.study_focus ? `\nتدرس/تحضّر: ${me.study_focus}` : ''}${me.previous_grades ? `\nتقديراتك السابقة: ${me.previous_grades}` : ''}\nوقت الدراسة: ${labels[me.study_time]}\nأسلوبك: ${labels[me.learning_style]}${me.sessions_per_week ? `\n${me.sessions_per_week} جلسات/أسبوع · ${labels[me.study_mode]}` : '\n📝 حدّث بياناتك حتى نحسن التوافق.'}`, menu);
 });
 bot.command('find', findMatches);
 bot.command('matches', showConnections);
@@ -296,7 +296,7 @@ bot.on('callback_query', async (ctx, next) => {
   if (data.startsWith('edit:')) {
     const me = await ensureRegistered(ctx); if (!me) return;
     const field = data.split(':')[1];
-    const prompts = { real_name: 'اكتب اسمك الحقيقي:', city: 'اكتب محافظتك:', university: 'اكتب اسم الجامعة أو المعهد:', major: 'اكتب تخصصك:', goal: 'اكتب هدفك الدراسي:', study_focus: 'شنو تدرس أو تحضّر حالياً؟ اكتب بحرية، مثال: تحضير المعادلة أو امتحان البورد.' };
+    const prompts = { real_name: 'اكتب اسمك الحقيقي:', city: 'اكتب محافظتك:', university: 'اكتب اسم الجامعة أو المعهد:', major: 'اكتب تخصصك:', goal: 'اكتب هدفك الدراسي:', study_focus: 'شنو تدرس أو تحضّر حالياً؟ اكتب بحرية، مثال: تحضير المعادلة أو امتحان البورد.', previous_grades: 'اكتب تقديراتك بالمرحلة السابقة بحرية. مثال: باطنية جيد، جراحة جيد، فارما جيد جداً.\nاكتب - إذا ما تريد تضيفها.' };
     if (field === 'preferences') return startPreferenceQuestions(ctx, 'update_preferences');
     if (field === 'gender') return ctx.reply('حدّد جنسك:', buttons([['بنت', 'edit_gender:female'], ['ولد', 'edit_gender:male']]));
     if (field === 'birth_year') { ctx.session = { flow: 'edit_profile', field }; return ctx.reply('اكتب سنة ميلادك:'); }
@@ -471,7 +471,8 @@ bot.on('text', async (ctx) => {
   if (s.step === 'major') { s.form.major = text; s.step = 'academic_year'; return ctx.reply('أي مرحلة دراسية؟', buttons([['الأولى', 'year:الأولى'], ['الثانية', 'year:الثانية'], ['الثالثة', 'year:الثالثة'], ['الرابعة', 'year:الرابعة'], ['الخامسة', 'year:الخامسة'], ['السادسة', 'year:السادسة'], ['خريج/ة 🎓', 'year:خريج/ة'], ['تحديد آخر ✏️', 'year_custom']])); }
   if (s.step === 'academic_year_custom') { s.form.academic_year = text; s.step = 'study_time'; return ctx.reply('متى تفضّل الدراسة غالباً؟', buttons([['صباحاً', 'time:morning'], ['ظهراً', 'time:afternoon'], ['مساءً', 'time:evening'], ['مرن', 'time:flexible']])); }
   if (s.step === 'goal') { s.form.goal = text; s.step = 'study_focus'; return ctx.reply('شنو تدرس أو تحضّر حالياً؟ اكتب بحرية، مثال: تحضير المعادلة أو امتحان البورد.'); }
-  if (s.step === 'study_focus') { s.form.study_focus = text; return startPreferenceQuestions(ctx, 'register', s.form); }
+  if (s.step === 'study_focus') { s.form.study_focus = text; s.step = 'previous_grades'; return ctx.reply('اكتب تقديراتك بالمرحلة السابقة بحرية. مثال: باطنية جيد، جراحة جيد، فارما جيد جداً.\nاكتب - إذا ما تريد تضيفها.'); }
+  if (s.step === 'previous_grades') { s.form.previous_grades = text === '-' ? null : text; return startPreferenceQuestions(ctx, 'register', s.form); }
 });
 
 // Registration callbacks are separate so all selection questions remain button-only.

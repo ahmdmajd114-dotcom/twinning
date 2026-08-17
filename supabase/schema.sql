@@ -26,6 +26,7 @@ alter table profiles add column if not exists study_mode text check (study_mode 
 alter table profiles add column if not exists partner_preference text check (partner_preference in ('study', 'accountability', 'both'));
 alter table profiles add column if not exists seriousness smallint check (seriousness between 1 and 5);
 alter table profiles add column if not exists study_focus text;
+alter table profiles add column if not exists previous_grades text;
 alter table profiles add column if not exists preferences_notified_at timestamptz;
 
 create table if not exists connections (
