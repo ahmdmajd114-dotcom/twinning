@@ -64,6 +64,7 @@ function aiProfile(profile, id) {
     learning_style: profile.learning_style,
     goal: profile.goal.slice(0, 220),
     study_focus: (profile.study_focus || '').slice(0, 220),
+    previous_grades: (profile.previous_grades || '').slice(0, 300),
     sessions_per_week: profile.sessions_per_week,
     session_duration: profile.session_duration,
     study_mode: profile.study_mode,
@@ -84,7 +85,7 @@ async function rerankWithGroq(me, candidates) {
       body: JSON.stringify({
         model: process.env.GROQ_MODEL || 'openai/gpt-oss-20b', temperature: 0.2, max_completion_tokens: 450,
         messages: [
-          { role: 'system', content: 'You rank study-partner candidates. Hard safety filters were already applied; never infer gender or add candidates. Rank using compatible study time, goals, commitment, learning style, academic stage, location and university. Return ONLY valid JSON exactly in this shape: {"matches":[{"id":"c1","reason":"سبب عربي قصير"}]}. Return every candidate ID once, and make each Arabic reason at most 18 words.' },
+          { role: 'system', content: 'You rank study-partner candidates. Hard safety filters were already applied; never infer gender or add candidates. Rank using compatible study time, goals, commitment, learning style, academic stage, location, university, current study focus, and previous-course grades. Grades should improve compatibility only when they indicate relevant shared subjects or comparable academic needs; never mention exact grades in the reason. Return ONLY valid JSON exactly in this shape: {"matches":[{"id":"c1","reason":"سبب عربي قصير"}]}. Return every candidate ID once, and make each Arabic reason at most 18 words.' },
           { role: 'user', content: JSON.stringify(input) }
         ]
       })
