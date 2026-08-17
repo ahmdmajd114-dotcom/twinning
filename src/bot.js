@@ -77,38 +77,22 @@ async function rerankWithGroq(me, candidates) {
     student: aiProfile(me, 'student'),
     candidates: candidates.map((candidate, index) => aiProfile(candidate, `c${index + 1}`))
   };
-  const schema = {
-    name: 'match_ranking', strict: true,
-    schema: {
-      type: 'object', additionalProperties: false,
-      properties: {
-        matches: {
-          type: 'array',
-          items: {
-            type: 'object', additionalProperties: false,
-            properties: { id: { type: 'string' }, reason: { type: 'string' } },
-            required: ['id', 'reason']
-          }
-        }
-      },
-      required: ['matches']
-    }
-  };
   try {
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: process.env.GROQ_MODEL || 'openai/gpt-oss-20b', temperature: 0.2, max_completion_tokens: 450,
-        response_format: { type: 'json_schema', json_schema: schema },
+        response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: 'You rank study-partner candidates. Hard safety filters were already applied; never infer gender or add candidates. Rank using compatible study time, goals, commitment, learning style, academic stage, location and university. Return every candidate ID once, with a brief Arabic reason of at most 18 words.' },
+          { role: 'system', content: 'You rank study-partner candidates. Hard safety filters were already applied; never infer gender or add candidates. Rank using compatible study time, goals, commitment, learning style, academic stage, location and university. Return ONLY valid JSON exactly in this shape: {"matches":[{"id":"c1","reason":"سبب عربي قصير"}]}. Return every candidate ID once, and make each Arabic reason at most 18 words.' },
           { role: 'user', content: JSON.stringify(input) }
         ]
       })
     });
-    if (!response.ok) throw new Error(`Groq returned ${response.status}`);
-    const result = await response.json();
+    const responseText = await response.text();
+    if (!response.ok) throw new Error(`Groq returned ${response.status}: ${responseText.slice(0, 400)}`);
+    const result = JSON.parse(responseText);
     const output = JSON.parse(result.choices?.[0]?.message?.content || '{}');
     const allowed = new Map(candidates.map((candidate, index) => [`c${index + 1}`, candidate]));
     const ordered = [];
