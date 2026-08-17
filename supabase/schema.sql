@@ -152,5 +152,5 @@ create index if not exists connections_participant_index on connections (request
 create index if not exists messages_connection_index on messages (connection_id, created_at desc);
 create index if not exists identity_disclosures_recipient_index on identity_disclosures (recipient_telegram_id);
 create index if not exists study_tasks_connection_index on study_tasks (connection_id, is_done);
-create index if not exists study_sessions_connection_status_index on study_sessions (connection_id, status, created_at desc);
+create index if not exists study_sessions_connection_status_index on study_sessions (connection_id, status, started_at desc);
 create index if not exists study_reminders_pending_index on study_reminders (status, reminder_at);
