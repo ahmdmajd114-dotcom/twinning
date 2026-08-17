@@ -13,15 +13,27 @@ const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_R
 });
 
 const labels = {
-  female: 'بنت', male: 'ولد', morning: 'صباحاً', afternoon: 'ظهراً', evening: 'مساءً', flexible: 'مرن',
+  female: 'بنت', male: 'ولد', early_morning: '6–9 صباحاً', morning: '9–12 صباحاً', noon: '12–3 ظهراً', afternoon: '3–6 عصراً', evening: '6–9 مساءً', night: '9–12 ليلاً', flexible: 'مرن',
   visual: 'بصري', reading: 'قراءة وكتابة', discussion: 'نقاش', practice: 'تطبيق وحل أسئلة',
   exam: 'تحضير للامتحانات', routine: 'التزام بروتين', assignments: 'واجبات ومشاريع', revise: 'مراجعة',
   online: 'أونلاين', in_person: 'حضوري', both: 'أونلاين وحضوري',
   study: 'مذاكرة فعلية', accountability: 'التزام ومتابعة',
   sessions: 'جلسات بالأسبوع',
-  30: '30 دقيقة', 45: '45 دقيقة', 60: 'ساعة', 90: 'ساعة ونصف', 120: 'ساعتان'
+  25: '25 دقيقة', 30: '30 دقيقة', 45: '45 دقيقة', 50: '50 دقيقة', 60: 'ساعة', 90: 'ساعة ونصف', 120: 'ساعتان'
 };
 const buttons = (items) => Markup.inlineKeyboard(items.map(([text, value]) => [Markup.button.callback(text, value)]));
+const grid = (items, columns = 2) => Markup.inlineKeyboard(Array.from({ length: Math.ceil(items.length / columns) }, (_, index) => items.slice(index * columns, index * columns + columns).map(([text, value]) => Markup.button.callback(text, value))));
+const IRAQI_GOVERNORATES = ['بغداد', 'البصرة', 'نينوى', 'أربيل', 'السليمانية', 'دهوك', 'كركوك', 'الأنبار', 'بابل', 'كربلاء', 'النجف', 'القادسية', 'ذي قار', 'ميسان', 'المثنى', 'واسط', 'صلاح الدين', 'ديالى', 'حلبجة'];
+const ARAB_COUNTRIES = ['الأردن', 'الإمارات', 'البحرين', 'الجزائر', 'السعودية', 'السودان', 'الصومال', 'العراق', 'عُمان', 'فلسطين', 'قطر', 'الكويت', 'لبنان', 'ليبيا', 'مصر', 'المغرب', 'موريتانيا', 'اليمن', 'تونس', 'جزر القمر', 'جيبوتي', 'سوريا'];
+const IRAQI_UNIVERSITIES = [
+  'جامعة بغداد', 'الجامعة المستنصرية', 'الجامعة التكنولوجية', 'جامعة النهرين', 'الجامعة العراقية', 'جامعة ابن سينا للعلوم الطبية والصيدلانية',
+  'جامعة البصرة', 'جامعة البصرة للنفط والغاز', 'جامعة الموصل', 'جامعة نينوى', 'جامعة الأنبار', 'جامعة الفلوجة',
+  'جامعة الكوفة', 'جامعة القادسية', 'جامعة واسط', 'جامعة ديالى', 'جامعة بابل', 'جامعة كربلاء', 'جامعة ذي قار', 'جامعة ميسان', 'جامعة المثنى', 'جامعة تكريت', 'جامعة كركوك', 'جامعة سامراء', 'جامعة سومر', 'جامعة القاسم الخضراء', 'جامعة الشطرة',
+  'الجامعة التقنية الوسطى', 'الجامعة التقنية الشمالية', 'الجامعة التقنية الجنوبية', 'جامعة الفرات الأوسط التقنية', 'جامعة تكنولوجيا المعلومات والاتصالات',
+  'جامعة صلاح الدين - أربيل', 'جامعة السليمانية', 'جامعة دهوك', 'جامعة حلبجة', 'جامعة كوية', 'جامعة سوران', 'جامعة رابرين', 'جامعة كرميان', 'جامعة زاخو', 'جامعة جمجمال'
+];
+const IRAQI_PRIVATE_INSTITUTIONS = ['جامعة المستقبل', 'جامعة وارث الأنبياء', 'جامعة العميد', 'جامعة الكفيل', 'جامعة العين العراقية', 'جامعة المعارف', 'جامعة الإسراء', 'جامعة البيان', 'جامعة الفراهيدي', 'جامعة الإمام جعفر الصادق', 'جامعة أهل البيت', 'جامعة الحلة', 'جامعة النور', 'جامعة الكوت', 'كلية التراث الجامعة', 'كلية المنصور الجامعة', 'كلية الرافدين الجامعة', 'كلية المأمون الجامعة', 'كلية شط العرب الجامعة', 'كلية دجلة الجامعة', 'كلية اليرموك الجامعة', 'كلية الحدباء الجامعة', 'كلية السلام الجامعة', 'كلية بغداد للعلوم الطبية', 'كلية بغداد للعلوم الاقتصادية', 'كلية الشيخ الطوسي الجامعة', 'كلية الحسين الجامعة', 'كلية الطف الجامعة', 'كلية الزهراوي الجامعة'];
+const CORE_MAJORS = ['طب عام', 'طب أسنان', 'صيدلة', 'تمريض', 'علوم طبية', 'طب بيطري', 'هندسة', 'علوم الحاسوب / تقنية معلومات', 'علوم', 'قانون', 'إدارة واقتصاد', 'تربية', 'زراعة'];
 const menu = Markup.keyboard([
   ['🔎 ابحث عن شريك', '🤝 طلباتي'],
   ['⚡ جاهز أدرس هسة', '⏱️ جلسة دراسة'],
@@ -60,10 +72,12 @@ function majorKey(value) {
   if (key.includes('تمريض')) return 'تمريض';
   return key;
 }
+function countryKey(value = '') { return normalise(value); }
 function studyFocusKey(value = '') { return normalise(value); }
 function aiProfile(profile, id) {
   return {
     id,
+    country: countryKey(profile.country || 'العراق'),
     governorate: governorateKey(profile.city),
     university: universityKey(profile.university),
     major: majorKey(profile.major),
@@ -127,7 +141,8 @@ async function rerankWithGroq(me, candidates) {
 }
 function score(me, candidate) {
   let value = 20;
-  if (governorateKey(me.city) === governorateKey(candidate.city)) value += 22;
+  if (countryKey(me.country || 'العراق') === countryKey(candidate.country || 'العراق')) value += 10;
+  if (countryKey(me.country || 'العراق') === countryKey(candidate.country || 'العراق') && governorateKey(me.city) === governorateKey(candidate.city)) value += 22;
   if (universityKey(me.university) === universityKey(candidate.university)) value += 24;
   if (majorKey(me.major) === majorKey(candidate.major)) value += 16;
   if (me.academic_year === candidate.academic_year) value += 8;
@@ -151,6 +166,21 @@ async function ensureRegistered(ctx) {
   if (!me) { await ctx.reply('حتى أبحث لك عن توأم دراسة، ابدأ التسجيل أولاً عبر /start.'); return null; }
   return me;
 }
+function showLocationChoice(ctx) {
+  return ctx.reply('وين تدرس؟', grid([['العراق 🇮🇶', 'location:iraq'], ['دولة عربية 🌍', 'location:arab'], ['دولة أخرى 🌐', 'location:other']]));
+}
+function showUniversityGroup(ctx) {
+  return ctx.reply('اختَر الجامعة أو المعهد:', grid([['جامعات حكومية', 'uni_group:public'], ['جامعات إقليم كردستان', 'uni_group:regional'], ['جامعة/كلية أهلية', 'uni_group:private'], ['جامعتي غير موجودة ✏️', 'uni_group:custom']]));
+}
+function showMajorChoice(ctx) {
+  return ctx.reply('اختَر تخصصك:', grid([...CORE_MAJORS.map((value, index) => [value, `major:${index}`]), ['تخصص آخر ✏️', 'major:custom']]));
+}
+function showAcademicYearChoice(ctx, prefix = 'year') {
+  return ctx.reply('أي مرحلة دراسية؟', grid([['الأولى', `${prefix}:الأولى`], ['الثانية', `${prefix}:الثانية`], ['الثالثة', `${prefix}:الثالثة`], ['الرابعة', `${prefix}:الرابعة`], ['الخامسة', `${prefix}:الخامسة`], ['السادسة', `${prefix}:السادسة`], ['خريج/ة 🎓', `${prefix}:خريج/ة`], ['تحضير بورد/إقامة 🩺', `${prefix}:تحضير بورد/إقامة`], ['تحديد آخر ✏️', `${prefix}:custom`]]));
+}
+function showStudyTimeChoice(ctx, prefix = 'time') {
+  return ctx.reply('متى تفضّل الدراسة غالباً؟', grid([['6–9 صباحاً', `${prefix}:early_morning`], ['9–12 صباحاً', `${prefix}:morning`], ['12–3 ظهراً', `${prefix}:noon`], ['3–6 عصراً', `${prefix}:afternoon`], ['6–9 مساءً', `${prefix}:evening`], ['9–12 ليلاً', `${prefix}:night`], ['مرن', `${prefix}:flexible`], ['وقت آخر ✏️', `${prefix}:custom`]]));
+}
 function startRegistration(ctx) {
   ctx.session = { flow: 'register', step: 'real_name', form: {} };
   return ctx.reply('أهلاً بك في Twinny 👋\nيلا ندخل بياناتك حتى نجد لك أفضل شريك دراسي مناسب.\n\nاكتب اسمك الحقيقي:');
@@ -161,7 +191,7 @@ async function startPreferenceQuestions(ctx, flow, form = {}) {
 }
 async function showUpdateMenu(ctx) {
   return ctx.reply('شنو تحب تحدّث من بياناتك؟', Markup.inlineKeyboard([
-    [Markup.button.callback('الاسم الحقيقي', 'edit:real_name'), Markup.button.callback('المحافظة', 'edit:city')],
+    [Markup.button.callback('الاسم الحقيقي', 'edit:real_name'), Markup.button.callback('المكان', 'edit:location')],
     [Markup.button.callback('الجامعة / المعهد', 'edit:university'), Markup.button.callback('التخصص', 'edit:major')],
     [Markup.button.callback('المرحلة الدراسية', 'edit:academic_year'), Markup.button.callback('وقت الدراسة', 'edit:study_time')],
     [Markup.button.callback('أسلوب التعلّم', 'edit:learning_style'), Markup.button.callback('الهدف الدراسي', 'edit:goal')],
@@ -203,7 +233,7 @@ bot.start(async (ctx) => {
 
 bot.command('profile', async (ctx) => {
   const me = await ensureRegistered(ctx); if (!me) return;
-  await ctx.reply(`ملفك\nالاسم الظاهر: ${me.pseudonym}\n${me.major} · ${me.academic_year}\n${me.university}، ${me.city}${me.study_focus ? `\nتدرس/تحضّر: ${me.study_focus}` : ''}${me.previous_grades ? `\nتقديراتك السابقة: ${me.previous_grades}` : ''}\nوقت الدراسة: ${labels[me.study_time]}\nأسلوبك: ${labels[me.learning_style]}${me.sessions_per_week ? `\n${me.sessions_per_week} جلسات/أسبوع · ${labels[me.study_mode]}` : '\n📝 حدّث بياناتك حتى نحسن التوافق.'}`, menu);
+  await ctx.reply(`ملفك\nالاسم الظاهر: ${me.pseudonym}\n${me.major} · ${me.academic_year}\n${me.university}، ${me.country || 'العراق'} · ${me.city}${me.study_focus ? `\nتدرس/تحضّر: ${me.study_focus}` : ''}${me.previous_grades ? `\nتقديراتك السابقة: ${me.previous_grades}` : ''}\nوقت الدراسة: ${labels[me.study_time] || me.study_time}\nأسلوبك: ${labels[me.learning_style]}${me.sessions_per_week ? `\n${me.sessions_per_week} جلسات/أسبوع · ${labels[me.study_mode] || me.study_mode}` : '\n📝 حدّث بياناتك حتى نحسن التوافق.'}`, menu);
 });
 bot.command('find', findMatches);
 bot.command('matches', showConnections);
@@ -223,11 +253,11 @@ async function findMatches(ctx) {
     const studyFocus = person.study_focus ? `\n📖 يدرس/يحضّر: ${person.study_focus}` : '';
     const grades = person.previous_grades ? `\n📊 التقديرات السابقة: ${person.previous_grades}` : '';
     const preferences = person.sessions_per_week
-      ? `\n📅 الجلسات: ${person.sessions_per_week} بالأسبوع · ${labels[person.session_duration]}\n💻 نمط الدراسة: ${labels[person.study_mode]}\n🤝 يريد من الشريك: ${person.partner_preference === 'both' ? 'الاثنين' : labels[person.partner_preference]}\n⭐ مستوى الجدية: ${'⭐'.repeat(person.seriousness)}`
+      ? `\n📅 الجلسات: ${person.sessions_per_week} بالأسبوع · ${labels[person.session_duration] || `${person.session_duration} دقيقة`}\n💻 نمط الدراسة: ${labels[person.study_mode] || person.study_mode}\n🤝 يريد من الشريك: ${person.partner_preference === 'both' ? 'الاثنين' : labels[person.partner_preference]}\n⭐ مستوى الجدية: ${'⭐'.repeat(person.seriousness)}`
       : '\n📝 لم يحدّث تفضيلات الدراسة بعد.';
     const aiReason = person.aiReason ? `\n🤖 سبب الاقتراح: ${person.aiReason}` : '';
     const rating = average === 'جديد' ? 'جديد — لا توجد تقييمات بعد' : `${average} / 5 · ${ratings.length} تقييم · ملتزم: ${committed}`;
-    await ctx.reply(`👤 شريك دراسة مقترح\n━━━━━━━━━━━━\n🏷 الاسم الظاهر: ${person.pseudonym}\n🎓 التخصص والمرحلة: ${person.major} · ${person.academic_year}\n🏛 الجامعة: ${person.university}\n📍 المحافظة: ${person.city}${studyFocus}${grades}\n━━━━━━━━━━━━\n⏰ وقت الدراسة: ${labels[person.study_time]}\n🧠 أسلوب الدراسة: ${labels[person.learning_style]}${preferences}\n━━━━━━━━━━━━\n✨ نسبة التوافق: ${score(me, person)}٪${aiReason}\n⭐ التقييم: ${rating}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
+    await ctx.reply(`👤 شريك دراسة مقترح\n━━━━━━━━━━━━\n🏷 الاسم الظاهر: ${person.pseudonym}\n🎓 التخصص والمرحلة: ${person.major} · ${person.academic_year}\n🏛 الجامعة: ${person.university}\n📍 المكان: ${person.country || 'العراق'} · ${person.city}${studyFocus}${grades}\n━━━━━━━━━━━━\n⏰ وقت الدراسة: ${labels[person.study_time] || person.study_time}\n🧠 أسلوب الدراسة: ${labels[person.learning_style]}${preferences}\n━━━━━━━━━━━━\n✨ نسبة التوافق: ${score(me, person)}٪${aiReason}\n⭐ التقييم: ${rating}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
   }
 }
 
@@ -477,22 +507,77 @@ bot.on('callback_query', async (ctx, next) => {
     const me = await ensureRegistered(ctx); if (!me) return;
     return showUpdateMenu(ctx);
   }
+  if (data.startsWith('location:')) {
+    if (!ctx.session?.form && ctx.session?.flow !== 'edit_location') return ctx.reply('ابدأ التسجيل عبر /start أولاً.');
+    const kind = data.split(':')[1];
+    if (kind === 'iraq') return ctx.reply('اختَر محافظتك:', grid(IRAQI_GOVERNORATES.map((value, index) => [value, `gov:${index}`])));
+    if (kind === 'arab') return ctx.reply('اختَر الدولة:', grid(ARAB_COUNTRIES.map((value, index) => [value, `arab:${index}`])));
+    ctx.session.step = 'country_custom';
+    return ctx.reply('اكتب اسم الدولة:');
+  }
+  if (data.startsWith('gov:')) {
+    const city = IRAQI_GOVERNORATES[Number(data.split(':')[1])];
+    if (!city) return ctx.reply('هذا الخيار غير متاح.');
+    if (ctx.session.flow === 'edit_location') {
+      const { error } = await db.from('profiles').update({ country: 'العراق', city, updated_at: new Date().toISOString() }).eq('telegram_id', ctx.from.id);
+      if (error) throw error;
+      ctx.session = {}; await ctx.reply('تم تحديث المكان ✅'); return showUpdateMenu(ctx);
+    }
+    ctx.session.form.country = 'العراق'; ctx.session.form.city = city; ctx.session.step = 'university';
+    return showUniversityGroup(ctx);
+  }
+  if (data.startsWith('arab:')) {
+    const country = ARAB_COUNTRIES[Number(data.split(':')[1])];
+    if (!country) return ctx.reply('هذا الخيار غير متاح.');
+    if (ctx.session.flow === 'edit_location') { ctx.session.country = country; ctx.session.step = 'foreign_city'; return ctx.reply('اكتب مدينتك:'); }
+    ctx.session.form.country = country; ctx.session.step = 'foreign_city'; return ctx.reply('اكتب مدينتك:');
+  }
+  if (data.startsWith('uni_group:')) {
+    const group = data.split(':')[1];
+    if (group === 'custom') { ctx.session.step = 'university_custom'; return ctx.reply('اكتب اسم الجامعة أو المعهد:'); }
+    const list = group === 'public' ? IRAQI_UNIVERSITIES.slice(0, 32) : group === 'regional' ? IRAQI_UNIVERSITIES.slice(32) : IRAQI_PRIVATE_INSTITUTIONS;
+    return ctx.reply('اختَر الاسم، أو استخدم الكتابة الحرة إذا غير موجود:', grid([...list.map((value, index) => [value, `uni:${group}:${index}`]), ['جامعتي غير موجودة ✏️', 'uni:custom:0']]));
+  }
+  if (data.startsWith('uni:')) {
+    const [, group, index] = data.split(':');
+    if (group === 'custom') { ctx.session.step = 'university_custom'; return ctx.reply('اكتب اسم الجامعة أو المعهد:'); }
+    const list = group === 'public' ? IRAQI_UNIVERSITIES.slice(0, 32) : group === 'regional' ? IRAQI_UNIVERSITIES.slice(32) : IRAQI_PRIVATE_INSTITUTIONS;
+    const university = list[Number(index)];
+    if (!university) return ctx.reply('هذا الخيار غير متاح.');
+    if (ctx.session.flow === 'edit_profile') return saveProfileField(ctx, 'university', university);
+    ctx.session.form.university = university; ctx.session.step = 'major'; return showMajorChoice(ctx);
+  }
+  if (data.startsWith('major:')) {
+    const value = data.split(':')[1];
+    if (value === 'custom') { ctx.session.step = 'major_custom'; return ctx.reply('اكتب تخصصك:'); }
+    const major = CORE_MAJORS[Number(value)];
+    if (!major) return ctx.reply('هذا الخيار غير متاح.');
+    if (ctx.session.flow === 'edit_profile') return saveProfileField(ctx, 'major', major);
+    ctx.session.form.major = major; ctx.session.step = 'academic_year'; return showAcademicYearChoice(ctx);
+  }
   if (data.startsWith('edit:')) {
     const me = await ensureRegistered(ctx); if (!me) return;
     const field = data.split(':')[1];
-    const prompts = { real_name: 'اكتب اسمك الحقيقي:', city: 'اكتب محافظتك:', university: 'اكتب اسم الجامعة أو المعهد:', major: 'اكتب تخصصك:', goal: 'اكتب هدفك الدراسي:', study_focus: 'شنو تدرس أو تحضّر حالياً؟ اكتب بحرية، مثال: تحضير المعادلة أو امتحان البورد.', previous_grades: 'اكتب تقديراتك بالمرحلة السابقة بحرية. مثال: باطنية جيد، جراحة جيد، فارما جيد جداً.\nاكتب - إذا ما تريد تضيفها.' };
+    const prompts = { real_name: 'اكتب اسمك الحقيقي:', university: 'اكتب اسم الجامعة أو المعهد:', major: 'اكتب تخصصك:', goal: 'اكتب هدفك الدراسي:', study_focus: 'شنو تدرس أو تحضّر حالياً؟ اكتب بحرية، مثال: تحضير المعادلة أو امتحان البورد.', previous_grades: 'اكتب تقديراتك بالمرحلة السابقة بحرية. مثال: باطنية جيد، جراحة جيد، فارما جيد جداً.\nاكتب - إذا ما تريد تضيفها.' };
+    if (field === 'location') { ctx.session = { flow: 'edit_location' }; return showLocationChoice(ctx); }
+    if (field === 'university') { ctx.session = { flow: 'edit_profile', field }; return showUniversityGroup(ctx); }
+    if (field === 'major') { ctx.session = { flow: 'edit_profile', field }; return showMajorChoice(ctx); }
     if (field === 'preferences') return startPreferenceQuestions(ctx, 'update_preferences');
     if (field === 'gender') return ctx.reply('حدّد جنسك:', buttons([['بنت', 'edit_gender:female'], ['ولد', 'edit_gender:male']]));
     if (field === 'birth_year') { ctx.session = { flow: 'edit_profile', field }; return ctx.reply('اكتب سنة ميلادك:'); }
-    if (field === 'academic_year') return ctx.reply('حدّد مرحلتك الدراسية:', buttons([['الأولى', 'edit_year:الأولى'], ['الثانية', 'edit_year:الثانية'], ['الثالثة', 'edit_year:الثالثة'], ['الرابعة', 'edit_year:الرابعة'], ['الخامسة', 'edit_year:الخامسة'], ['السادسة', 'edit_year:السادسة'], ['خريج/ة 🎓', 'edit_year:خريج/ة'], ['تحديد آخر ✏️', 'edit_year:custom']]));
-    if (field === 'study_time') return ctx.reply('متى تفضّل الدراسة غالباً؟', buttons([['صباحاً', 'edit_time:morning'], ['ظهراً', 'edit_time:afternoon'], ['مساءً', 'edit_time:evening'], ['مرن', 'edit_time:flexible']]));
+    if (field === 'academic_year') return showAcademicYearChoice(ctx, 'edit_year');
+    if (field === 'study_time') return showStudyTimeChoice(ctx, 'edit_time');
     if (field === 'learning_style') return ctx.reply('شنو أسلوبك المفضل؟', buttons([['بصري', 'edit_style:visual'], ['قراءة وكتابة', 'edit_style:reading'], ['نقاش', 'edit_style:discussion'], ['حل أسئلة', 'edit_style:practice']]));
     if (!prompts[field]) return ctx.reply('هذا الخيار غير متاح.');
     ctx.session = { flow: 'edit_profile', field };
     return ctx.reply(prompts[field]);
   }
   if (data.startsWith('edit_gender:')) return saveProfileField(ctx, 'gender', data.split(':')[1]);
-  if (data.startsWith('edit_time:')) return saveProfileField(ctx, 'study_time', data.split(':')[1]);
+  if (data.startsWith('edit_time:')) {
+    const value = data.split(':')[1];
+    if (value === 'custom') { ctx.session = { flow: 'edit_profile', field: 'study_time' }; return ctx.reply('اكتب الوقت الذي يناسبك:'); }
+    return saveProfileField(ctx, 'study_time', value);
+  }
   if (data.startsWith('edit_style:')) return saveProfileField(ctx, 'learning_style', data.split(':')[1]);
   if (data.startsWith('edit_year:')) {
     const value = data.split(':')[1];
@@ -706,6 +791,14 @@ bot.on('text', async (ctx) => {
     await bot.telegram.sendMessage(partner.telegram_id, `🔔 تم ضبط تذكير دراسة مشترك الساعة ${shownTime} بتوقيت بغداد. راح توصلكم رسالة بالحضور وقت الموعد.`, menu);
     return ctx.reply(`تم ضبط التذكير الساعة ${shownTime} بتوقيت بغداد ✅`, menu);
   }
+  if (ctx.session?.flow === 'edit_location') {
+    if (ctx.session.step === 'country_custom') { ctx.session.country = text; ctx.session.step = 'foreign_city'; return ctx.reply('اكتب مدينتك:'); }
+    if (ctx.session.step === 'foreign_city') {
+      const { error } = await db.from('profiles').update({ country: ctx.session.country, city: text, updated_at: new Date().toISOString() }).eq('telegram_id', ctx.from.id);
+      if (error) throw error;
+      ctx.session = {}; await ctx.reply('تم تحديث المكان ✅'); return showUpdateMenu(ctx);
+    }
+  }
   if (ctx.session?.flow === 'reveal_identity') {
     if (text !== 'أكشف' && text !== 'اكشف') return ctx.reply('ما تغير شيء. اكتب أكشف إذا تريد تأكيد كشف اسمك.');
     const { connectionId, recipientId } = ctx.session;
@@ -736,11 +829,15 @@ bot.on('text', async (ctx) => {
   if (ctx.session?.flow !== 'register' && ctx.session?.flow !== 'update_preferences') return;
   const s = ctx.session;
   if (s.step === 'real_name') { s.form.real_name = text; s.step = 'gender'; return ctx.reply('حدّد جنسك:', buttons([['بنت', 'gender:female'], ['ولد', 'gender:male']])); }
-  if (s.step === 'birth_year') { const year = Number(text); if (!Number.isInteger(year) || ageFrom(year) < 16 || ageFrom(year) > 60) return ctx.reply('اكتب سنة ميلاد صحيحة (العمر المسموح من 16 إلى 60).'); s.form.birth_year = year; s.step = 'city'; return ctx.reply('اكتب محافظتك:'); }
-  if (s.step === 'city') { s.form.city = text; s.step = 'university'; return ctx.reply('اكتب اسم الجامعة أو المعهد:'); }
-  if (s.step === 'university') { s.form.university = text; s.step = 'major'; return ctx.reply('اكتب تخصصك:'); }
-  if (s.step === 'major') { s.form.major = text; s.step = 'academic_year'; return ctx.reply('أي مرحلة دراسية؟', buttons([['الأولى', 'year:الأولى'], ['الثانية', 'year:الثانية'], ['الثالثة', 'year:الثالثة'], ['الرابعة', 'year:الرابعة'], ['الخامسة', 'year:الخامسة'], ['السادسة', 'year:السادسة'], ['خريج/ة 🎓', 'year:خريج/ة'], ['تحديد آخر ✏️', 'year_custom']])); }
-  if (s.step === 'academic_year_custom') { s.form.academic_year = text; s.step = 'study_time'; return ctx.reply('متى تفضّل الدراسة غالباً؟', buttons([['صباحاً', 'time:morning'], ['ظهراً', 'time:afternoon'], ['مساءً', 'time:evening'], ['مرن', 'time:flexible']])); }
+  if (s.step === 'birth_year') { const year = Number(text); if (!Number.isInteger(year) || ageFrom(year) < 16 || ageFrom(year) > 60) return ctx.reply('اكتب سنة ميلاد صحيحة (العمر المسموح من 16 إلى 60).'); s.form.birth_year = year; s.step = 'location'; return showLocationChoice(ctx); }
+  if (s.step === 'country_custom') { s.form.country = text; s.step = 'foreign_city'; return ctx.reply('اكتب مدينتك:'); }
+  if (s.step === 'foreign_city') { s.form.city = text; s.step = 'university'; return showUniversityGroup(ctx); }
+  if (s.step === 'university_custom') { s.form.university = text; s.step = 'major'; return showMajorChoice(ctx); }
+  if (s.step === 'major_custom') { s.form.major = text; s.step = 'academic_year'; return showAcademicYearChoice(ctx); }
+  if (s.step === 'academic_year_custom') { s.form.academic_year = text; s.step = 'study_time'; return showStudyTimeChoice(ctx); }
+  if (s.step === 'study_time_custom') { s.form.study_time = text; s.step = 'learning_style'; return ctx.reply('شنو أسلوبك المفضل؟', buttons([['بصري', 'style:visual'], ['قراءة وكتابة', 'style:reading'], ['نقاش', 'style:discussion'], ['حل أسئلة', 'style:practice']])); }
+  if (s.step === 'session_duration_custom') { const minutes = Number(text); if (!Number.isInteger(minutes) || minutes < 10 || minutes > 240) return ctx.reply('اكتب رقماً من 10 إلى 240 دقيقة.'); s.form.session_duration = minutes; s.step = 'study_mode'; return ctx.reply('تفضّل الدراسة شلون؟', grid([['أونلاين', 'mode:online'], ['حضوري', 'mode:in_person'], ['الاثنين', 'mode:both'], ['نمط آخر ✏️', 'mode:custom']])); }
+  if (s.step === 'study_mode_custom') { s.form.study_mode = text; s.step = 'partner_preference'; return ctx.reply('شنو تريد من شريكك أكثر؟', buttons([['مذاكرة فعلية', 'preference:study'], ['التزام ومتابعة', 'preference:accountability'], ['الاثنين', 'preference:both']])); }
   if (s.step === 'goal') { s.form.goal = text; s.step = 'study_focus'; return ctx.reply('شنو تدرس أو تحضّر حالياً؟ اكتب بحرية، مثال: تحضير المعادلة أو امتحان البورد.'); }
   if (s.step === 'study_focus') { s.form.study_focus = text; s.step = 'previous_grades'; return ctx.reply('اكتب تقديراتك بالمرحلة السابقة بحرية. مثال: باطنية جيد، جراحة جيد، فارما جيد جداً.\nاكتب - إذا ما تريد تضيفها.'); }
   if (s.step === 'previous_grades') { s.form.previous_grades = text === '-' ? null : text; return startPreferenceQuestions(ctx, 'register', s.form); }
@@ -749,12 +846,12 @@ bot.on('text', async (ctx) => {
 // Registration callbacks are separate so all selection questions remain button-only.
 bot.action(/^gender:(female|male)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.gender = ctx.match[1]; ctx.session.step = 'birth_year'; await ctx.reply('اكتب سنة ميلادك (مثال: 2004):'); });
 bot.action('year_custom', async (ctx) => { await ctx.answerCbQuery(); ctx.session.step = 'academic_year_custom'; await ctx.reply('اكتب مرحلتك الدراسية أو الوصف الذي يناسبك:'); });
-bot.action(/^year:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.academic_year = ctx.match[1]; ctx.session.step = 'study_time'; await ctx.reply('متى تفضّل الدراسة غالباً؟', buttons([['صباحاً', 'time:morning'], ['ظهراً', 'time:afternoon'], ['مساءً', 'time:evening'], ['مرن', 'time:flexible']])); });
-bot.action(/^time:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.study_time = ctx.match[1]; ctx.session.step = 'learning_style'; await ctx.reply('شنو أسلوبك المفضل؟', buttons([['بصري', 'style:visual'], ['قراءة وكتابة', 'style:reading'], ['نقاش', 'style:discussion'], ['حل أسئلة', 'style:practice']])); });
+bot.action(/^year:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.academic_year = ctx.match[1]; ctx.session.step = 'study_time'; await showStudyTimeChoice(ctx); });
+bot.action(/^time:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); if (ctx.match[1] === 'custom') { ctx.session.step = 'study_time_custom'; return ctx.reply('اكتب الوقت الذي يناسبك:'); } ctx.session.form.study_time = ctx.match[1]; ctx.session.step = 'learning_style'; await ctx.reply('شنو أسلوبك المفضل؟', buttons([['بصري', 'style:visual'], ['قراءة وكتابة', 'style:reading'], ['نقاش', 'style:discussion'], ['حل أسئلة', 'style:practice']])); });
 bot.action(/^style:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.learning_style = ctx.match[1]; ctx.session.step = 'goal'; await ctx.reply('شنو هدفك الأساسي من شريك الدراسة؟ مثال: التزام 3 جلسات بالأسبوع أو تحضير للفاينل'); });
-bot.action(/^sessions:(\d+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.sessions_per_week = Number(ctx.match[1]); ctx.session.step = 'session_duration'; await ctx.reply('كم مدة الجلسة التي تفضّلها؟', buttons([['30 دقيقة', 'duration:30'], ['45 دقيقة', 'duration:45'], ['ساعة', 'duration:60'], ['ساعة ونصف', 'duration:90'], ['ساعتان', 'duration:120']])); });
-bot.action(/^duration:(\d+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.session_duration = Number(ctx.match[1]); ctx.session.step = 'study_mode'; await ctx.reply('تفضّل الدراسة شلون؟', buttons([['أونلاين', 'mode:online'], ['حضوري', 'mode:in_person'], ['الاثنين', 'mode:both']])); });
-bot.action(/^mode:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.study_mode = ctx.match[1]; ctx.session.step = 'partner_preference'; await ctx.reply('شنو تريد من شريكك أكثر؟', buttons([['مذاكرة فعلية', 'preference:study'], ['التزام ومتابعة', 'preference:accountability'], ['الاثنين', 'preference:both']])); });
+bot.action(/^sessions:(\d+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.sessions_per_week = Number(ctx.match[1]); ctx.session.step = 'session_duration'; await ctx.reply('كم مدة الجلسة التي تفضّلها؟', grid([['25 دقيقة', 'duration:25'], ['50 دقيقة', 'duration:50'], ['ساعة', 'duration:60'], ['ساعة ونصف', 'duration:90'], ['ساعتان', 'duration:120'], ['مدة أخرى ✏️', 'duration:custom']])); });
+bot.action(/^duration:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); if (ctx.match[1] === 'custom') { ctx.session.step = 'session_duration_custom'; return ctx.reply('اكتب المدة بالدقائق، من 10 إلى 240:'); } ctx.session.form.session_duration = Number(ctx.match[1]); ctx.session.step = 'study_mode'; await ctx.reply('تفضّل الدراسة شلون؟', grid([['أونلاين', 'mode:online'], ['حضوري', 'mode:in_person'], ['الاثنين', 'mode:both'], ['نمط آخر ✏️', 'mode:custom']])); });
+bot.action(/^mode:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); if (ctx.match[1] === 'custom') { ctx.session.step = 'study_mode_custom'; return ctx.reply('اكتب نمط الدراسة الذي تفضّله:'); } ctx.session.form.study_mode = ctx.match[1]; ctx.session.step = 'partner_preference'; await ctx.reply('شنو تريد من شريكك أكثر؟', buttons([['مذاكرة فعلية', 'preference:study'], ['التزام ومتابعة', 'preference:accountability'], ['الاثنين', 'preference:both']])); });
 bot.action(/^preference:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.partner_preference = ctx.match[1]; ctx.session.step = 'seriousness'; await ctx.reply('قيّم مستوى جديتك بالدراسة:', buttons([['1', 'seriousness:1'], ['2', 'seriousness:2'], ['3', 'seriousness:3'], ['4', 'seriousness:4'], ['5', 'seriousness:5']])); });
 bot.action(/^seriousness:([1-5])$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.seriousness = Number(ctx.match[1]); await finishPreferences(ctx); });
 

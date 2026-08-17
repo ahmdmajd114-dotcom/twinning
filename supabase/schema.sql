@@ -28,6 +28,13 @@ alter table profiles add column if not exists seriousness smallint check (seriou
 alter table profiles add column if not exists study_focus text;
 alter table profiles add column if not exists previous_grades text;
 alter table profiles add column if not exists preferences_notified_at timestamptz;
+alter table profiles add column if not exists country text not null default 'العراق';
+
+-- Allow fixed choices plus a user-entered duration or study mode when needed.
+alter table profiles drop constraint if exists profiles_session_duration_check;
+alter table profiles add constraint profiles_session_duration_check check (session_duration is null or session_duration between 10 and 240);
+alter table profiles drop constraint if exists profiles_study_mode_check;
+alter table profiles add constraint profiles_study_mode_check check (study_mode is null or char_length(study_mode) between 1 and 80);
 
 create table if not exists connections (
   id bigint generated always as identity primary key,

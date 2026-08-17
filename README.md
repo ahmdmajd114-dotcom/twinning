@@ -12,7 +12,7 @@ python3 -m http.server 4173
 
 ## تشغيل البوت
 
-1. أنشئ مشروعاً في Supabase وشغّل محتوى `supabase/schema.sql` من SQL Editor.
+1. أنشئ مشروعاً في Supabase وشغّل محتوى `supabase/schema.sql` من SQL Editor. عند كل تحديث للميزات، شغّله مرة أخرى بأمان لإضافة الأعمدة الجديدة مثل الدولة وقوائم الدراسة.
 2. انسخ `.env.example` إلى `.env` وأضف Token البوت ومفاتيح Supabase.
 3. ثبّت الحزم وشغّل البوت:
 
