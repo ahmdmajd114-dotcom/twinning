@@ -1,0 +1,19 @@
+{
+  "name": "rifqa-telegram-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "بوت رِفقة لمطابقة شركاء الدراسة",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "check": "node --check bot.js && node --check src/config.js && node --check src/matcher.js && node --check src/storage.js && node --check script.js",
+    "check:config": "node bot.js --check-config",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "telegraf": "^4.16.3"
+  }
+}
