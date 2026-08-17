@@ -156,6 +156,23 @@ async function startPreferenceQuestions(ctx, flow, form = {}) {
   ctx.session = { flow, step: 'sessions_per_week', form };
   return ctx.reply('كم جلسة دراسة تريد بالأسبوع؟', buttons([['جلسة واحدة', 'sessions:1'], ['جلستان', 'sessions:2'], ['3 جلسات', 'sessions:3'], ['4 جلسات', 'sessions:4'], ['5 جلسات أو أكثر', 'sessions:5']]));
 }
+async function showUpdateMenu(ctx) {
+  return ctx.reply('شنو تحب تحدّث من بياناتك؟', Markup.inlineKeyboard([
+    [Markup.button.callback('الاسم الحقيقي', 'edit:real_name'), Markup.button.callback('المحافظة', 'edit:city')],
+    [Markup.button.callback('الجامعة / المعهد', 'edit:university'), Markup.button.callback('التخصص', 'edit:major')],
+    [Markup.button.callback('المرحلة الدراسية', 'edit:academic_year'), Markup.button.callback('وقت الدراسة', 'edit:study_time')],
+    [Markup.button.callback('أسلوب التعلّم', 'edit:learning_style'), Markup.button.callback('الهدف الدراسي', 'edit:goal')],
+    [Markup.button.callback('تفضيلات التوافق', 'edit:preferences'), Markup.button.callback('الجنس', 'edit:gender')],
+    [Markup.button.callback('سنة الميلاد', 'edit:birth_year')]
+  ]));
+}
+async function saveProfileField(ctx, field, value) {
+  const { error } = await db.from('profiles').update({ [field]: value, updated_at: new Date().toISOString() }).eq('telegram_id', ctx.from.id);
+  if (error) throw error;
+  ctx.session = {};
+  await ctx.reply('تم تحديث المعلومة ✅');
+  return showUpdateMenu(ctx);
+}
 async function finishPreferences(ctx) {
   if (ctx.session.flow === 'register') return finishRegistration(ctx);
   const { error } = await db.from('profiles').update(ctx.session.form).eq('telegram_id', ctx.from.id);
@@ -215,7 +232,9 @@ async function showConnections(ctx) {
     const other = await profile(otherId);
     const state = item.status === 'pending' ? 'قيد الانتظار' : item.status === 'accepted' ? 'تم القبول ✅' : 'مرفوض';
     const actions = item.status === 'pending' && item.recipient_telegram_id === me.telegram_id
-      ? buttons([['أقبل ✅', `accept:${item.id}`], ['أرفض', `reject:${item.id}`]]) : undefined;
+      ? buttons([['أقبل ✅', `accept:${item.id}`], ['أرفض', `reject:${item.id}`]])
+      : item.status === 'pending' && item.requester_telegram_id === me.telegram_id
+        ? buttons([['إلغاء الطلب', `cancel_request:${item.id}`]]) : undefined;
     await ctx.reply(`${other?.pseudonym ?? 'طالب'} — ${state}`, actions);
   }
 }
@@ -281,7 +300,29 @@ bot.on('callback_query', async (ctx, next) => {
   }
   if (data === 'update_preferences') {
     const me = await ensureRegistered(ctx); if (!me) return;
-    return startPreferenceQuestions(ctx, 'update_preferences');
+    return showUpdateMenu(ctx);
+  }
+  if (data.startsWith('edit:')) {
+    const me = await ensureRegistered(ctx); if (!me) return;
+    const field = data.split(':')[1];
+    const prompts = { real_name: 'اكتب اسمك الحقيقي:', city: 'اكتب محافظتك:', university: 'اكتب اسم الجامعة أو المعهد:', major: 'اكتب تخصصك:', goal: 'اكتب هدفك الدراسي:' };
+    if (field === 'preferences') return startPreferenceQuestions(ctx, 'update_preferences');
+    if (field === 'gender') return ctx.reply('حدّد جنسك:', buttons([['بنت', 'edit_gender:female'], ['ولد', 'edit_gender:male']]));
+    if (field === 'birth_year') { ctx.session = { flow: 'edit_profile', field }; return ctx.reply('اكتب سنة ميلادك:'); }
+    if (field === 'academic_year') return ctx.reply('حدّد مرحلتك الدراسية:', buttons([['الأولى', 'edit_year:الأولى'], ['الثانية', 'edit_year:الثانية'], ['الثالثة', 'edit_year:الثالثة'], ['الرابعة', 'edit_year:الرابعة'], ['الخامسة', 'edit_year:الخامسة'], ['السادسة', 'edit_year:السادسة'], ['تحديد آخر ✏️', 'edit_year:custom']]));
+    if (field === 'study_time') return ctx.reply('متى تفضّل الدراسة غالباً؟', buttons([['صباحاً', 'edit_time:morning'], ['ظهراً', 'edit_time:afternoon'], ['مساءً', 'edit_time:evening'], ['مرن', 'edit_time:flexible']]));
+    if (field === 'learning_style') return ctx.reply('شنو أسلوبك المفضل؟', buttons([['بصري', 'edit_style:visual'], ['قراءة وكتابة', 'edit_style:reading'], ['نقاش', 'edit_style:discussion'], ['حل أسئلة', 'edit_style:practice']]));
+    if (!prompts[field]) return ctx.reply('هذا الخيار غير متاح.');
+    ctx.session = { flow: 'edit_profile', field };
+    return ctx.reply(prompts[field]);
+  }
+  if (data.startsWith('edit_gender:')) return saveProfileField(ctx, 'gender', data.split(':')[1]);
+  if (data.startsWith('edit_time:')) return saveProfileField(ctx, 'study_time', data.split(':')[1]);
+  if (data.startsWith('edit_style:')) return saveProfileField(ctx, 'learning_style', data.split(':')[1]);
+  if (data.startsWith('edit_year:')) {
+    const value = data.split(':')[1];
+    if (value === 'custom') { ctx.session = { flow: 'edit_profile', field: 'academic_year' }; return ctx.reply('اكتب مرحلتك الدراسية أو الوصف المناسب:'); }
+    return saveProfileField(ctx, 'academic_year', value);
   }
   if (data.startsWith('request:')) {
     const recipient = Number(data.split(':')[1]);
@@ -292,6 +333,14 @@ bot.on('callback_query', async (ctx, next) => {
     if (error) throw error;
     await ctx.reply('تم إرسال طلب التعارف 🤝');
     return bot.telegram.sendMessage(recipient, `وصلك طلب تعارف دراسي من ${me.pseudonym}.`, buttons([['عرض طلباتي', 'open_requests']]));
+  }
+  if (data.startsWith('cancel_request:')) {
+    const id = Number(data.split(':')[1]);
+    const { data: connection } = await db.from('connections').select('*').eq('id', id).maybeSingle();
+    if (!connection || connection.requester_telegram_id !== ctx.from.id || connection.status !== 'pending') return ctx.reply('هذا الطلب لم يعد قابلاً للإلغاء.');
+    const { error } = await db.from('connections').delete().eq('id', id);
+    if (error) throw error;
+    return ctx.reply('تم إلغاء طلب التعارف.');
   }
   if (data === 'open_requests') return showConnections(ctx);
   if (data.startsWith('accept:') || data.startsWith('reject:')) {
@@ -371,7 +420,7 @@ bot.on('text', async (ctx) => {
   if (text === '🔎 ابحث عن شريك') return findMatches(ctx);
   if (text === '👤 ملفي') return bot.handleUpdate({ ...ctx.update, message: { ...ctx.message, text: '/profile', entities: [{ offset: 0, length: 8, type: 'bot_command' }] } });
   if (text === '🤝 طلباتي') return showConnections(ctx);
-  if (text === '📝 تحديث بياناتي') { const me = await ensureRegistered(ctx); if (!me) return; return startPreferenceQuestions(ctx, 'update_preferences'); }
+  if (text === '📝 تحديث بياناتي') { const me = await ensureRegistered(ctx); if (!me) return; return showUpdateMenu(ctx); }
   if (text === '✉️ راسل شريكاً') return choosePartner(ctx, 'message', 'اختَر الشريك الذي تريد مراسلته:');
   if (text === '🔐 كشف هويتي') return choosePartner(ctx, 'identity', 'لأي شريك تحب تكشف اسمك الحقيقي؟');
   if (text === '📋 مهامنا') return showTasks(ctx);
@@ -412,6 +461,15 @@ bot.on('text', async (ctx) => {
     if (error) throw error;
     await bot.telegram.sendMessage(ctx.session.recipientId, `📋 أضيفت مهمة مشتركة جديدة: ${ctx.session.title}${due ? `\nالاستحقاق: ${due}` : ''}`, menu);
     ctx.session = {}; return ctx.reply('انضافت المهمة وانرسل إشعار لشريكك ✅', menu);
+  }
+  if (ctx.session?.flow === 'edit_profile') {
+    const field = ctx.session.field;
+    if (field === 'birth_year') {
+      const year = Number(text);
+      if (!Number.isInteger(year) || ageFrom(year) < 16 || ageFrom(year) > 60) return ctx.reply('اكتب سنة ميلاد صحيحة (العمر المسموح من 16 إلى 60).');
+      return saveProfileField(ctx, field, year);
+    }
+    return saveProfileField(ctx, field, text);
   }
   if (ctx.session?.flow !== 'register' && ctx.session?.flow !== 'update_preferences') return;
   const s = ctx.session;
