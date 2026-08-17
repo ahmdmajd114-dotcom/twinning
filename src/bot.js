@@ -411,6 +411,17 @@ async function sendCandidateCards(ctx, me, candidates, { heading, showScore = fa
   }
 }
 
+async function incomingRequestProfileText(person) {
+  const { data: ratings, error } = await db.from('ratings').select('stars, commitment').eq('reviewed_telegram_id', person.telegram_id);
+  if (error) throw error;
+  const average = ratings?.length ? (ratings.reduce((sum, rating) => sum + rating.stars, 0) / ratings.length).toFixed(1) : 'جديد';
+  const committed = ratings?.filter((rating) => rating.commitment === 'committed').length ?? 0;
+  const preferences = person.sessions_per_week
+    ? `\n📅 الجلسات: ${person.sessions_per_week} بالأسبوع · ${labels[person.session_duration] || `${person.session_duration} دقيقة`}\n💻 نمط الدراسة: ${labels[person.study_mode] || person.study_mode}\n🤝 يريد من الشريك: ${person.partner_preference === 'both' ? 'الاثنين' : labels[person.partner_preference]}\n🎥 المكالمة: ${labels[person.call_preference] || 'لم يحدّد'}\n🗣 القراءة بصوت عالٍ: ${labels[person.aloud_reading_preference] || 'لم يحدّد'}\n⭐ مستوى الجدية: ${'⭐'.repeat(person.seriousness || 0)}`
+    : '\n📝 لم يحدّث تفضيلات الدراسة بعد.';
+  return `🤝 وصلك طلب تعارف دراسي\n━━━━━━━━━━━━\n🏷 الاسم الظاهر: ${person.pseudonym}\n🎓 التخصص والمرحلة: ${person.major} · ${person.academic_year}\n🏛 الجامعة: ${person.university}\n📍 المكان: ${person.country || 'العراق'} · ${person.city}${person.study_focus ? `\n📖 يدرس/يحضّر: ${person.study_focus}` : ''}${person.previous_grades ? `\n📊 التقديرات السابقة: ${person.previous_grades}` : ''}\n━━━━━━━━━━━━\n🎯 الغاية الدراسية: ${person.goal}\n⏰ وقت الدراسة: ${labels[person.study_time] || person.study_time}\n🧠 أسلوب الدراسة: ${labels[person.learning_style] || person.learning_style}${preferences}${availabilitySummary(person) ? `\n🗓 التوفر: ${availabilitySummary(person)}` : ''}\n━━━━━━━━━━━━\n⭐ التقييم: ${average === 'جديد' ? 'جديد — لا توجد تقييمات بعد' : `${average} / 5 · ${ratings.length} تقييم · ملتزم: ${committed}`}\n\nالاسم الحقيقي يبقى مخفياً إلى أن يختار صاحبه كشفه.`;
+}
+
 async function showConnections(ctx) {
   const me = await ensureRegistered(ctx); if (!me) return;
   const { data, error } = await db.from('connections').select('*').or(`requester_telegram_id.eq.${me.telegram_id},recipient_telegram_id.eq.${me.telegram_id}`).order('created_at', { ascending: false });
@@ -424,7 +435,9 @@ async function showConnections(ctx) {
       ? buttons([['أقبل ✅', `accept:${item.id}`], ['أرفض', `reject:${item.id}`]])
       : item.status === 'pending' && item.requester_telegram_id === me.telegram_id
         ? buttons([['إلغاء الطلب', `cancel_request:${item.id}`]]) : undefined;
-    await ctx.reply(`${other?.pseudonym ?? 'طالب'} — ${state}`, actions);
+    if (item.status === 'pending' && item.recipient_telegram_id === me.telegram_id && other) {
+      await ctx.reply(await incomingRequestProfileText(other), actions);
+    } else await ctx.reply(`${other?.pseudonym ?? 'طالب'} — ${state}`, actions);
   }
 }
 
@@ -861,8 +874,11 @@ bot.on('callback_query', async (ctx, next) => {
     if (!other || other.gender !== me.gender) return ctx.reply('هذا الاقتراح لم يعد متاحاً.');
     const { error } = await db.from('connections').upsert({ requester_telegram_id: me.telegram_id, recipient_telegram_id: recipient }, { onConflict: 'requester_telegram_id,recipient_telegram_id', ignoreDuplicates: true });
     if (error) throw error;
+    const { data: connection, error: connectionError } = await db.from('connections').select('id, status').eq('requester_telegram_id', me.telegram_id).eq('recipient_telegram_id', recipient).maybeSingle();
+    if (connectionError) throw connectionError;
     await ctx.reply('تم إرسال طلب التعارف 🤝');
-    return bot.telegram.sendMessage(recipient, `وصلك طلب تعارف دراسي من ${me.pseudonym}.`, buttons([['عرض طلباتي', 'open_requests']]));
+    if (connection?.status === 'pending') return bot.telegram.sendMessage(recipient, await incomingRequestProfileText(me), buttons([['أقبل ✅', `accept:${connection.id}`], ['أرفض', `reject:${connection.id}`], ['عرض طلباتي', 'open_requests']]));
+    return;
   }
   if (data.startsWith('cancel_request:')) {
     const id = Number(data.split(':')[1]);
