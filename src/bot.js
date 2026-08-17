@@ -210,7 +210,8 @@ async function findMatches(ctx) {
     const preferences = person.sessions_per_week ? `\n📅 ${person.sessions_per_week} جلسات/أسبوع · ${labels[person.study_mode]} · جدية ${'⭐'.repeat(person.seriousness)}` : '';
     const aiReason = person.aiReason ? `\n🤖 ${person.aiReason}` : '';
     const studyFocus = person.study_focus ? `\n📖 يدرس/يحضّر: ${person.study_focus}` : '';
-    await ctx.reply(`👤 ${person.pseudonym}\n${person.major} · ${person.academic_year}\n${person.university}، ${person.city}${studyFocus}\n⏰ ${labels[person.study_time]} · 🧠 ${labels[person.learning_style]}${preferences}\n✨ توافق ${score(me, person)}٪${aiReason}\n⭐ التقييم: ${average}${average === 'جديد' ? '' : ` / 5 (${ratings.length} تقييم، ملتزم: ${committed})`}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
+    const grades = person.previous_grades ? `\n📊 التقديرات السابقة: ${person.previous_grades}` : '';
+    await ctx.reply(`👤 ${person.pseudonym}\n${person.major} · ${person.academic_year}\n${person.university}، ${person.city}${studyFocus}${grades}\n⏰ ${labels[person.study_time]} · 🧠 ${labels[person.learning_style]}${preferences}\n✨ توافق ${score(me, person)}٪${aiReason}\n⭐ التقييم: ${average}${average === 'جديد' ? '' : ` / 5 (${ratings.length} تقييم، ملتزم: ${committed})`}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
   }
 }
 
