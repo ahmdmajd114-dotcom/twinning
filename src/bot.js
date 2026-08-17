@@ -275,6 +275,10 @@ async function showTasks(ctx) {
 bot.on('callback_query', async (ctx, next) => {
   const data = ctx.callbackQuery.data;
   await ctx.answerCbQuery();
+  const registrationButton = /^(gender|year|time|style|sessions|duration|mode|preference|seriousness):/.test(data) || data === 'year_custom';
+  if (registrationButton && !ctx.session?.form) {
+    return ctx.reply('انتهت جلسة التسجيل السابقة بسبب إعادة تشغيل البوت. اكتب /start ونبدأ من جديد 👋');
+  }
   if (data === 'update_preferences') {
     const me = await ensureRegistered(ctx); if (!me) return;
     return startPreferenceQuestions(ctx, 'update_preferences');
