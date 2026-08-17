@@ -51,6 +51,7 @@ function majorKey(value) {
   if (key.includes('تمريض')) return 'تمريض';
   return key;
 }
+function studyFocusKey(value = '') { return normalise(value); }
 function aiProfile(profile, id) {
   return {
     id,
@@ -62,6 +63,7 @@ function aiProfile(profile, id) {
     study_time: profile.study_time,
     learning_style: profile.learning_style,
     goal: profile.goal.slice(0, 220),
+    study_focus: (profile.study_focus || '').slice(0, 220),
     sessions_per_week: profile.sessions_per_week,
     session_duration: profile.session_duration,
     study_mode: profile.study_mode,
@@ -131,6 +133,7 @@ function score(me, candidate) {
   if (me.academic_year === candidate.academic_year) value += 8;
   if (me.study_time === candidate.study_time) value += 5;
   if (me.learning_style === candidate.learning_style) value += 3;
+  if (me.study_focus && candidate.study_focus && studyFocusKey(me.study_focus) === studyFocusKey(candidate.study_focus)) value += 8;
   if (Math.abs(ageFrom(me.birth_year) - ageFrom(candidate.birth_year)) <= 2) value += 2;
   if (me.study_mode && me.study_mode === candidate.study_mode) value += 7;
   if (me.partner_preference && me.partner_preference === candidate.partner_preference) value += 5;
@@ -162,6 +165,7 @@ async function showUpdateMenu(ctx) {
     [Markup.button.callback('الجامعة / المعهد', 'edit:university'), Markup.button.callback('التخصص', 'edit:major')],
     [Markup.button.callback('المرحلة الدراسية', 'edit:academic_year'), Markup.button.callback('وقت الدراسة', 'edit:study_time')],
     [Markup.button.callback('أسلوب التعلّم', 'edit:learning_style'), Markup.button.callback('الهدف الدراسي', 'edit:goal')],
+    [Markup.button.callback('شنو تدرس/تحضّر؟', 'edit:study_focus')],
     [Markup.button.callback('تفضيلات التوافق', 'edit:preferences'), Markup.button.callback('الجنس', 'edit:gender')],
     [Markup.button.callback('سنة الميلاد', 'edit:birth_year')]
   ]));
@@ -199,7 +203,7 @@ bot.start(async (ctx) => {
 
 bot.command('profile', async (ctx) => {
   const me = await ensureRegistered(ctx); if (!me) return;
-  await ctx.reply(`ملفك\nالاسم الظاهر: ${me.pseudonym}\n${me.major} · ${me.academic_year}\n${me.university}، ${me.city}\nوقت الدراسة: ${labels[me.study_time]}\nأسلوبك: ${labels[me.learning_style]}${me.sessions_per_week ? `\n${me.sessions_per_week} جلسات/أسبوع · ${labels[me.study_mode]}` : '\n📝 حدّث بياناتك حتى نحسن التوافق.'}`, menu);
+  await ctx.reply(`ملفك\nالاسم الظاهر: ${me.pseudonym}\n${me.major} · ${me.academic_year}\n${me.university}، ${me.city}${me.study_focus ? `\nتدرس/تحضّر: ${me.study_focus}` : ''}\nوقت الدراسة: ${labels[me.study_time]}\nأسلوبك: ${labels[me.learning_style]}${me.sessions_per_week ? `\n${me.sessions_per_week} جلسات/أسبوع · ${labels[me.study_mode]}` : '\n📝 حدّث بياناتك حتى نحسن التوافق.'}`, menu);
 });
 bot.command('find', findMatches);
 bot.command('matches', showConnections);
@@ -218,7 +222,8 @@ async function findMatches(ctx) {
     const committed = ratings?.filter((r) => r.commitment === 'committed').length ?? 0;
     const preferences = person.sessions_per_week ? `\n📅 ${person.sessions_per_week} جلسات/أسبوع · ${labels[person.study_mode]} · جدية ${'⭐'.repeat(person.seriousness)}` : '';
     const aiReason = person.aiReason ? `\n🤖 ${person.aiReason}` : '';
-    await ctx.reply(`👤 ${person.pseudonym}\n${person.major} · ${person.academic_year}\n${person.university}، ${person.city}\n⏰ ${labels[person.study_time]} · 🧠 ${labels[person.learning_style]}${preferences}\n✨ توافق ${score(me, person)}٪${aiReason}\n⭐ التقييم: ${average}${average === 'جديد' ? '' : ` / 5 (${ratings.length} تقييم، ملتزم: ${committed})`}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
+    const studyFocus = person.study_focus ? `\n📖 يدرس/يحضّر: ${person.study_focus}` : '';
+    await ctx.reply(`👤 ${person.pseudonym}\n${person.major} · ${person.academic_year}\n${person.university}، ${person.city}${studyFocus}\n⏰ ${labels[person.study_time]} · 🧠 ${labels[person.learning_style]}${preferences}\n✨ توافق ${score(me, person)}٪${aiReason}\n⭐ التقييم: ${average}${average === 'جديد' ? '' : ` / 5 (${ratings.length} تقييم، ملتزم: ${committed})`}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
   }
 }
 
@@ -305,11 +310,11 @@ bot.on('callback_query', async (ctx, next) => {
   if (data.startsWith('edit:')) {
     const me = await ensureRegistered(ctx); if (!me) return;
     const field = data.split(':')[1];
-    const prompts = { real_name: 'اكتب اسمك الحقيقي:', city: 'اكتب محافظتك:', university: 'اكتب اسم الجامعة أو المعهد:', major: 'اكتب تخصصك:', goal: 'اكتب هدفك الدراسي:' };
+    const prompts = { real_name: 'اكتب اسمك الحقيقي:', city: 'اكتب محافظتك:', university: 'اكتب اسم الجامعة أو المعهد:', major: 'اكتب تخصصك:', goal: 'اكتب هدفك الدراسي:', study_focus: 'شنو تدرس أو تحضّر حالياً؟ اكتب بحرية، مثال: تحضير المعادلة أو امتحان البورد.' };
     if (field === 'preferences') return startPreferenceQuestions(ctx, 'update_preferences');
     if (field === 'gender') return ctx.reply('حدّد جنسك:', buttons([['بنت', 'edit_gender:female'], ['ولد', 'edit_gender:male']]));
     if (field === 'birth_year') { ctx.session = { flow: 'edit_profile', field }; return ctx.reply('اكتب سنة ميلادك:'); }
-    if (field === 'academic_year') return ctx.reply('حدّد مرحلتك الدراسية:', buttons([['الأولى', 'edit_year:الأولى'], ['الثانية', 'edit_year:الثانية'], ['الثالثة', 'edit_year:الثالثة'], ['الرابعة', 'edit_year:الرابعة'], ['الخامسة', 'edit_year:الخامسة'], ['السادسة', 'edit_year:السادسة'], ['تحديد آخر ✏️', 'edit_year:custom']]));
+    if (field === 'academic_year') return ctx.reply('حدّد مرحلتك الدراسية:', buttons([['الأولى', 'edit_year:الأولى'], ['الثانية', 'edit_year:الثانية'], ['الثالثة', 'edit_year:الثالثة'], ['الرابعة', 'edit_year:الرابعة'], ['الخامسة', 'edit_year:الخامسة'], ['السادسة', 'edit_year:السادسة'], ['خريج/ة 🎓', 'edit_year:خريج/ة'], ['تحديد آخر ✏️', 'edit_year:custom']]));
     if (field === 'study_time') return ctx.reply('متى تفضّل الدراسة غالباً؟', buttons([['صباحاً', 'edit_time:morning'], ['ظهراً', 'edit_time:afternoon'], ['مساءً', 'edit_time:evening'], ['مرن', 'edit_time:flexible']]));
     if (field === 'learning_style') return ctx.reply('شنو أسلوبك المفضل؟', buttons([['بصري', 'edit_style:visual'], ['قراءة وكتابة', 'edit_style:reading'], ['نقاش', 'edit_style:discussion'], ['حل أسئلة', 'edit_style:practice']]));
     if (!prompts[field]) return ctx.reply('هذا الخيار غير متاح.');
@@ -477,9 +482,10 @@ bot.on('text', async (ctx) => {
   if (s.step === 'birth_year') { const year = Number(text); if (!Number.isInteger(year) || ageFrom(year) < 16 || ageFrom(year) > 60) return ctx.reply('اكتب سنة ميلاد صحيحة (العمر المسموح من 16 إلى 60).'); s.form.birth_year = year; s.step = 'city'; return ctx.reply('اكتب محافظتك:'); }
   if (s.step === 'city') { s.form.city = text; s.step = 'university'; return ctx.reply('اكتب اسم الجامعة أو المعهد:'); }
   if (s.step === 'university') { s.form.university = text; s.step = 'major'; return ctx.reply('اكتب تخصصك:'); }
-  if (s.step === 'major') { s.form.major = text; s.step = 'academic_year'; return ctx.reply('أي مرحلة دراسية؟', buttons([['الأولى', 'year:الأولى'], ['الثانية', 'year:الثانية'], ['الثالثة', 'year:الثالثة'], ['الرابعة', 'year:الرابعة'], ['الخامسة', 'year:الخامسة'], ['السادسة', 'year:السادسة'], ['تحديد آخر ✏️', 'year_custom']])); }
+  if (s.step === 'major') { s.form.major = text; s.step = 'academic_year'; return ctx.reply('أي مرحلة دراسية؟', buttons([['الأولى', 'year:الأولى'], ['الثانية', 'year:الثانية'], ['الثالثة', 'year:الثالثة'], ['الرابعة', 'year:الرابعة'], ['الخامسة', 'year:الخامسة'], ['السادسة', 'year:السادسة'], ['خريج/ة 🎓', 'year:خريج/ة'], ['تحديد آخر ✏️', 'year_custom']])); }
   if (s.step === 'academic_year_custom') { s.form.academic_year = text; s.step = 'study_time'; return ctx.reply('متى تفضّل الدراسة غالباً؟', buttons([['صباحاً', 'time:morning'], ['ظهراً', 'time:afternoon'], ['مساءً', 'time:evening'], ['مرن', 'time:flexible']])); }
-  if (s.step === 'goal') { s.form.goal = text; return startPreferenceQuestions(ctx, 'register', s.form); }
+  if (s.step === 'goal') { s.form.goal = text; s.step = 'study_focus'; return ctx.reply('شنو تدرس أو تحضّر حالياً؟ اكتب بحرية، مثال: تحضير المعادلة أو امتحان البورد.'); }
+  if (s.step === 'study_focus') { s.form.study_focus = text; return startPreferenceQuestions(ctx, 'register', s.form); }
 });
 
 // Registration callbacks are separate so all selection questions remain button-only.
