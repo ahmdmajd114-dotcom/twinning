@@ -517,9 +517,19 @@ async function notifyExistingStudents() {
 }
 
 healthServer.listen(port, '0.0.0.0', () => console.log(`Health check listening on :${port}`));
-bot.launch().then(async () => {
-  console.log('Twinny bot is running with long polling.');
-  await notifyExistingStudents();
-});
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+let shuttingDown = false;
+
+async function startBot() {
+  try {
+    await bot.launch();
+    console.log('Twinny bot is running with long polling.');
+    await notifyExistingStudents();
+  } catch (error) {
+    console.error('Telegram polling stopped; retrying in 30 seconds:', error.message);
+    if (!shuttingDown) setTimeout(startBot, 30_000);
+  }
+}
+
+startBot();
+process.once('SIGINT', () => { shuttingDown = true; bot.stop('SIGINT'); });
+process.once('SIGTERM', () => { shuttingDown = true; bot.stop('SIGTERM'); });
