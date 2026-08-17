@@ -51,6 +51,78 @@ function majorKey(value) {
   if (key.includes('تمريض')) return 'تمريض';
   return key;
 }
+function aiProfile(profile, id) {
+  return {
+    id,
+    governorate: governorateKey(profile.city),
+    university: universityKey(profile.university),
+    major: majorKey(profile.major),
+    academic_year: profile.academic_year,
+    age: ageFrom(profile.birth_year),
+    study_time: profile.study_time,
+    learning_style: profile.learning_style,
+    goal: profile.goal.slice(0, 220),
+    sessions_per_week: profile.sessions_per_week,
+    session_duration: profile.session_duration,
+    study_mode: profile.study_mode,
+    partner_preference: profile.partner_preference,
+    seriousness: profile.seriousness
+  };
+}
+async function rerankWithGroq(me, candidates) {
+  if (!process.env.GROQ_API_KEY || candidates.length < 2) return candidates;
+  const input = {
+    student: aiProfile(me, 'student'),
+    candidates: candidates.map((candidate, index) => aiProfile(candidate, `c${index + 1}`))
+  };
+  const schema = {
+    name: 'match_ranking', strict: true,
+    schema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        matches: {
+          type: 'array',
+          items: {
+            type: 'object', additionalProperties: false,
+            properties: { id: { type: 'string' }, reason: { type: 'string' } },
+            required: ['id', 'reason']
+          }
+        }
+      },
+      required: ['matches']
+    }
+  };
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: process.env.GROQ_MODEL || 'openai/gpt-oss-20b', temperature: 0.2, max_completion_tokens: 450,
+        response_format: { type: 'json_schema', json_schema: schema },
+        messages: [
+          { role: 'system', content: 'You rank study-partner candidates. Hard safety filters were already applied; never infer gender or add candidates. Rank using compatible study time, goals, commitment, learning style, academic stage, location and university. Return every candidate ID once, with a brief Arabic reason of at most 18 words.' },
+          { role: 'user', content: JSON.stringify(input) }
+        ]
+      })
+    });
+    if (!response.ok) throw new Error(`Groq returned ${response.status}`);
+    const result = await response.json();
+    const output = JSON.parse(result.choices?.[0]?.message?.content || '{}');
+    const allowed = new Map(candidates.map((candidate, index) => [`c${index + 1}`, candidate]));
+    const ordered = [];
+    for (const match of output.matches || []) {
+      const candidate = allowed.get(match.id);
+      if (candidate && !ordered.includes(candidate)) {
+        candidate.aiReason = String(match.reason).slice(0, 160);
+        ordered.push(candidate);
+      }
+    }
+    return [...ordered, ...candidates.filter((candidate) => !ordered.includes(candidate))];
+  } catch (error) {
+    console.error('Groq re-ranking failed; using deterministic ranking:', error.message);
+    return candidates;
+  }
+}
 function score(me, candidate) {
   let value = 20;
   if (governorateKey(me.city) === governorateKey(candidate.city)) value += 22;
@@ -120,14 +192,16 @@ async function findMatches(ctx) {
   const me = await ensureRegistered(ctx); if (!me) return;
   const { data: people, error } = await db.from('profiles').select('*').eq('gender', me.gender).eq('is_active', true).neq('telegram_id', me.telegram_id);
   if (error) throw error;
-  const candidates = people.sort((a, b) => score(me, b) - score(me, a)).slice(0, 3);
+  const deterministic = people.sort((a, b) => score(me, b) - score(me, a)).slice(0, 10);
+  const candidates = (await rerankWithGroq(me, deterministic)).slice(0, 3);
   if (!candidates.length) return ctx.reply('حالياً ماكو طالب مناسب ضمن نفس الجنس. جرّب لاحقاً، واحنا نوسع المجتمع يومياً.', menu);
   for (const person of candidates) {
     const { data: ratings } = await db.from('ratings').select('stars, commitment').eq('reviewed_telegram_id', person.telegram_id);
     const average = ratings?.length ? (ratings.reduce((sum, r) => sum + r.stars, 0) / ratings.length).toFixed(1) : 'جديد';
     const committed = ratings?.filter((r) => r.commitment === 'committed').length ?? 0;
     const preferences = person.sessions_per_week ? `\n📅 ${person.sessions_per_week} جلسات/أسبوع · ${labels[person.study_mode]} · جدية ${'⭐'.repeat(person.seriousness)}` : '';
-    await ctx.reply(`👤 ${person.pseudonym}\n${person.major} · ${person.academic_year}\n${person.university}، ${person.city}\n⏰ ${labels[person.study_time]} · 🧠 ${labels[person.learning_style]}${preferences}\n✨ توافق ${score(me, person)}٪\n⭐ التقييم: ${average}${average === 'جديد' ? '' : ` / 5 (${ratings.length} تقييم، ملتزم: ${committed})`}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
+    const aiReason = person.aiReason ? `\n🤖 ${person.aiReason}` : '';
+    await ctx.reply(`👤 ${person.pseudonym}\n${person.major} · ${person.academic_year}\n${person.university}، ${person.city}\n⏰ ${labels[person.study_time]} · 🧠 ${labels[person.learning_style]}${preferences}\n✨ توافق ${score(me, person)}٪${aiReason}\n⭐ التقييم: ${average}${average === 'جديد' ? '' : ` / 5 (${ratings.length} تقييم، ملتزم: ${committed})`}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
   }
 }
 
