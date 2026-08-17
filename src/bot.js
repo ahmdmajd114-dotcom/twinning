@@ -15,25 +15,55 @@ const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_R
 const labels = {
   female: 'بنت', male: 'ولد', morning: 'صباحاً', afternoon: 'ظهراً', evening: 'مساءً', flexible: 'مرن',
   visual: 'بصري', reading: 'قراءة وكتابة', discussion: 'نقاش', practice: 'تطبيق وحل أسئلة',
-  exam: 'تحضير للامتحانات', routine: 'التزام بروتين', assignments: 'واجبات ومشاريع', revise: 'مراجعة'
+  exam: 'تحضير للامتحانات', routine: 'التزام بروتين', assignments: 'واجبات ومشاريع', revise: 'مراجعة',
+  online: 'أونلاين', in_person: 'حضوري', both: 'أونلاين وحضوري',
+  study: 'مذاكرة فعلية', accountability: 'التزام ومتابعة',
+  sessions: 'جلسات بالأسبوع'
 };
 const buttons = (items) => Markup.inlineKeyboard(items.map(([text, value]) => [Markup.button.callback(text, value)]));
-const menu = Markup.keyboard([['🔎 ابحث عن شريك', '🤝 طلباتي'], ['✉️ راسل شريكاً', '🔐 كشف هويتي'], ['📋 مهامنا', '➕ مهمة'], ['⏱️ جلسة دراسة', '👤 ملفي'], ['⭐ قيّم شريكاً', '🗑️ حذف حسابي']]).resize();
+const menu = Markup.keyboard([['🔎 ابحث عن شريك', '🤝 طلباتي'], ['📝 تحديث بياناتي', '✉️ راسل شريكاً'], ['🔐 كشف هويتي', '📋 مهامنا'], ['➕ مهمة', '⏱️ جلسة دراسة'], ['👤 ملفي', '⭐ قيّم شريكاً'], ['🗑️ حذف حسابي']]).resize();
 
 function aliasFor(id) {
   const n = Math.abs(Number(BigInt(id) % 10000n));
   return `Twinny ${String(n).padStart(4, '0')}`;
 }
 function ageFrom(year) { return new Date().getFullYear() - Number(year); }
+function normalise(value = '') {
+  return value.toLowerCase().normalize('NFD').replace(/[\u064B-\u065F\u0670]/g, '').replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').replace(/[^\p{L}\p{N}]/gu, '');
+}
+function governorateKey(value) {
+  const key = normalise(value);
+  const aliases = { بابل: ['بابل', 'الحله', 'حله', 'babel', 'babylon', 'hilla'], بغداد: ['بغداد', 'baghdad'], البصره: ['البصره', 'بصره', 'basra'], كربلاء: ['كربلاء', 'كربلا', 'karbala'], النجف: ['النجف', 'نجف', 'najaf'], اربيل: ['اربيل', 'erbil'], نينوى: ['نينوى', 'موصل', 'الموصل', 'mosul'], واسط: ['واسط', 'كوت', 'الكوت', 'wasit', 'kut'], ديالى: ['ديالى', 'بعقوبه', 'baqubah', 'diyala'] };
+  for (const [canonical, values] of Object.entries(aliases)) if (values.some((item) => key.includes(normalise(item)))) return canonical;
+  return key;
+}
+function universityKey(value) {
+  const key = normalise(value);
+  const known = ['بغداد', 'بابل', 'البصره', 'الكوفه', 'كربلاء', 'المستنصريه', 'النهرين', 'واسط', 'ديالى', 'تكريت', 'الموصل'];
+  const found = known.find((item) => key.includes(item));
+  return found ? `جامعه${found}` : key.replace(/(جامعه|كليه|معهد)/g, '');
+}
+function majorKey(value) {
+  const key = normalise(value);
+  if (key.includes('طب')) return 'طب';
+  if (key.includes('صيدل')) return 'صيدله';
+  if (key.includes('اسنان')) return 'طباسنان';
+  if (key.includes('تمريض')) return 'تمريض';
+  return key;
+}
 function score(me, candidate) {
   let value = 20;
-  if (me.city.trim().toLowerCase() === candidate.city.trim().toLowerCase()) value += 22;
-  if (me.university.trim().toLowerCase() === candidate.university.trim().toLowerCase()) value += 24;
-  if (me.major.trim().toLowerCase() === candidate.major.trim().toLowerCase()) value += 16;
+  if (governorateKey(me.city) === governorateKey(candidate.city)) value += 22;
+  if (universityKey(me.university) === universityKey(candidate.university)) value += 24;
+  if (majorKey(me.major) === majorKey(candidate.major)) value += 16;
   if (me.academic_year === candidate.academic_year) value += 8;
   if (me.study_time === candidate.study_time) value += 5;
   if (me.learning_style === candidate.learning_style) value += 3;
   if (Math.abs(ageFrom(me.birth_year) - ageFrom(candidate.birth_year)) <= 2) value += 2;
+  if (me.study_mode && me.study_mode === candidate.study_mode) value += 7;
+  if (me.partner_preference && me.partner_preference === candidate.partner_preference) value += 5;
+  if (me.sessions_per_week && Math.abs(me.sessions_per_week - candidate.sessions_per_week) <= 1) value += 5;
+  if (me.seriousness && Math.abs(me.seriousness - candidate.seriousness) <= 1) value += 3;
   return Math.min(value, 100);
 }
 async function profile(id) {
@@ -49,6 +79,17 @@ async function ensureRegistered(ctx) {
 function startRegistration(ctx) {
   ctx.session = { flow: 'register', step: 'real_name', form: {} };
   return ctx.reply('أهلاً بك في Twinny 👋\nيلا ندخل بياناتك حتى نجد لك أفضل شريك دراسي مناسب.\n\nاكتب اسمك الحقيقي:');
+}
+async function startPreferenceQuestions(ctx, flow, form = {}) {
+  ctx.session = { flow, step: 'sessions_per_week', form };
+  return ctx.reply('كم جلسة دراسة تريد بالأسبوع؟', buttons([['جلسة واحدة', 'sessions:1'], ['جلستان', 'sessions:2'], ['3 جلسات', 'sessions:3'], ['4 جلسات', 'sessions:4'], ['5 جلسات أو أكثر', 'sessions:5']]));
+}
+async function finishPreferences(ctx) {
+  if (ctx.session.flow === 'register') return finishRegistration(ctx);
+  const { error } = await db.from('profiles').update(ctx.session.form).eq('telegram_id', ctx.from.id);
+  if (error) throw error;
+  ctx.session = {};
+  return ctx.reply('تم تحديث بياناتك ✅ هسه نكدر نطلع لك اقتراحات أدق. اختَر «🔎 ابحث عن شريك».', menu);
 }
 async function finishRegistration(ctx) {
   const form = ctx.session.form;
@@ -69,7 +110,7 @@ bot.start(async (ctx) => {
 
 bot.command('profile', async (ctx) => {
   const me = await ensureRegistered(ctx); if (!me) return;
-  await ctx.reply(`ملفك\nالاسم الظاهر: ${me.pseudonym}\n${me.major} · ${me.academic_year}\n${me.university}، ${me.city}\nوقت الدراسة: ${labels[me.study_time]}\nأسلوبك: ${labels[me.learning_style]}`, menu);
+  await ctx.reply(`ملفك\nالاسم الظاهر: ${me.pseudonym}\n${me.major} · ${me.academic_year}\n${me.university}، ${me.city}\nوقت الدراسة: ${labels[me.study_time]}\nأسلوبك: ${labels[me.learning_style]}${me.sessions_per_week ? `\n${me.sessions_per_week} جلسات/أسبوع · ${labels[me.study_mode]}` : '\n📝 حدّث بياناتك حتى نحسن التوافق.'}`, menu);
 });
 bot.command('find', findMatches);
 bot.command('matches', showConnections);
@@ -85,7 +126,8 @@ async function findMatches(ctx) {
     const { data: ratings } = await db.from('ratings').select('stars, commitment').eq('reviewed_telegram_id', person.telegram_id);
     const average = ratings?.length ? (ratings.reduce((sum, r) => sum + r.stars, 0) / ratings.length).toFixed(1) : 'جديد';
     const committed = ratings?.filter((r) => r.commitment === 'committed').length ?? 0;
-    await ctx.reply(`👤 ${person.pseudonym}\n${person.major} · ${person.academic_year}\n${person.university}، ${person.city}\n⏰ ${labels[person.study_time]} · 🧠 ${labels[person.learning_style]}\n✨ توافق ${score(me, person)}٪\n⭐ التقييم: ${average}${average === 'جديد' ? '' : ` / 5 (${ratings.length} تقييم، ملتزم: ${committed})`}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
+    const preferences = person.sessions_per_week ? `\n📅 ${person.sessions_per_week} جلسات/أسبوع · ${labels[person.study_mode]} · جدية ${'⭐'.repeat(person.seriousness)}` : '';
+    await ctx.reply(`👤 ${person.pseudonym}\n${person.major} · ${person.academic_year}\n${person.university}، ${person.city}\n⏰ ${labels[person.study_time]} · 🧠 ${labels[person.learning_style]}${preferences}\n✨ توافق ${score(me, person)}٪\n⭐ التقييم: ${average}${average === 'جديد' ? '' : ` / 5 (${ratings.length} تقييم، ملتزم: ${committed})`}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
   }
 }
 
@@ -159,6 +201,10 @@ async function showTasks(ctx) {
 bot.on('callback_query', async (ctx, next) => {
   const data = ctx.callbackQuery.data;
   await ctx.answerCbQuery();
+  if (data === 'update_preferences') {
+    const me = await ensureRegistered(ctx); if (!me) return;
+    return startPreferenceQuestions(ctx, 'update_preferences');
+  }
   if (data.startsWith('request:')) {
     const recipient = Number(data.split(':')[1]);
     const me = await ensureRegistered(ctx); if (!me) return;
@@ -247,6 +293,7 @@ bot.on('text', async (ctx) => {
   if (text === '🔎 ابحث عن شريك') return findMatches(ctx);
   if (text === '👤 ملفي') return bot.handleUpdate({ ...ctx.update, message: { ...ctx.message, text: '/profile', entities: [{ offset: 0, length: 8, type: 'bot_command' }] } });
   if (text === '🤝 طلباتي') return showConnections(ctx);
+  if (text === '📝 تحديث بياناتي') { const me = await ensureRegistered(ctx); if (!me) return; return startPreferenceQuestions(ctx, 'update_preferences'); }
   if (text === '✉️ راسل شريكاً') return choosePartner(ctx, 'message', 'اختَر الشريك الذي تريد مراسلته:');
   if (text === '🔐 كشف هويتي') return choosePartner(ctx, 'identity', 'لأي شريك تحب تكشف اسمك الحقيقي؟');
   if (text === '📋 مهامنا') return showTasks(ctx);
@@ -288,7 +335,7 @@ bot.on('text', async (ctx) => {
     await bot.telegram.sendMessage(ctx.session.recipientId, `📋 أضيفت مهمة مشتركة جديدة: ${ctx.session.title}${due ? `\nالاستحقاق: ${due}` : ''}`, menu);
     ctx.session = {}; return ctx.reply('انضافت المهمة وانرسل إشعار لشريكك ✅', menu);
   }
-  if (ctx.session?.flow !== 'register') return;
+  if (ctx.session?.flow !== 'register' && ctx.session?.flow !== 'update_preferences') return;
   const s = ctx.session;
   if (s.step === 'real_name') { s.form.real_name = text; s.step = 'gender'; return ctx.reply('حدّد جنسك:', buttons([['بنت', 'gender:female'], ['ولد', 'gender:male']])); }
   if (s.step === 'birth_year') { const year = Number(text); if (!Number.isInteger(year) || ageFrom(year) < 16 || ageFrom(year) > 60) return ctx.reply('اكتب سنة ميلاد صحيحة (العمر المسموح من 16 إلى 60).'); s.form.birth_year = year; s.step = 'city'; return ctx.reply('اكتب محافظتك:'); }
@@ -296,7 +343,7 @@ bot.on('text', async (ctx) => {
   if (s.step === 'university') { s.form.university = text; s.step = 'major'; return ctx.reply('اكتب تخصصك:'); }
   if (s.step === 'major') { s.form.major = text; s.step = 'academic_year'; return ctx.reply('أي مرحلة دراسية؟', buttons([['الأولى', 'year:الأولى'], ['الثانية', 'year:الثانية'], ['الثالثة', 'year:الثالثة'], ['الرابعة', 'year:الرابعة'], ['الخامسة', 'year:الخامسة'], ['السادسة', 'year:السادسة'], ['تحديد آخر ✏️', 'year_custom']])); }
   if (s.step === 'academic_year_custom') { s.form.academic_year = text; s.step = 'study_time'; return ctx.reply('متى تفضّل الدراسة غالباً؟', buttons([['صباحاً', 'time:morning'], ['ظهراً', 'time:afternoon'], ['مساءً', 'time:evening'], ['مرن', 'time:flexible']])); }
-  if (s.step === 'goal') { s.form.goal = text; return finishRegistration(ctx); }
+  if (s.step === 'goal') { s.form.goal = text; return startPreferenceQuestions(ctx, 'register', s.form); }
 });
 
 // Registration callbacks are separate so all selection questions remain button-only.
@@ -305,6 +352,11 @@ bot.action('year_custom', async (ctx) => { await ctx.answerCbQuery(); ctx.sessio
 bot.action(/^year:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.academic_year = ctx.match[1]; ctx.session.step = 'study_time'; await ctx.reply('متى تفضّل الدراسة غالباً؟', buttons([['صباحاً', 'time:morning'], ['ظهراً', 'time:afternoon'], ['مساءً', 'time:evening'], ['مرن', 'time:flexible']])); });
 bot.action(/^time:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.study_time = ctx.match[1]; ctx.session.step = 'learning_style'; await ctx.reply('شنو أسلوبك المفضل؟', buttons([['بصري', 'style:visual'], ['قراءة وكتابة', 'style:reading'], ['نقاش', 'style:discussion'], ['حل أسئلة', 'style:practice']])); });
 bot.action(/^style:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.learning_style = ctx.match[1]; ctx.session.step = 'goal'; await ctx.reply('شنو هدفك الأساسي من شريك الدراسة؟ مثال: التزام 3 جلسات بالأسبوع أو تحضير للفاينل'); });
+bot.action(/^sessions:(\d+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.sessions_per_week = Number(ctx.match[1]); ctx.session.step = 'session_duration'; await ctx.reply('كم مدة الجلسة التي تفضّلها؟', buttons([['30 دقيقة', 'duration:30'], ['45 دقيقة', 'duration:45'], ['ساعة', 'duration:60'], ['ساعة ونصف', 'duration:90'], ['ساعتان', 'duration:120']])); });
+bot.action(/^duration:(\d+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.session_duration = Number(ctx.match[1]); ctx.session.step = 'study_mode'; await ctx.reply('تفضّل الدراسة شلون؟', buttons([['أونلاين', 'mode:online'], ['حضوري', 'mode:in_person'], ['الاثنين', 'mode:both']])); });
+bot.action(/^mode:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.study_mode = ctx.match[1]; ctx.session.step = 'partner_preference'; await ctx.reply('شنو تريد من شريكك أكثر؟', buttons([['مذاكرة فعلية', 'preference:study'], ['التزام ومتابعة', 'preference:accountability'], ['الاثنين', 'preference:both']])); });
+bot.action(/^preference:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.partner_preference = ctx.match[1]; ctx.session.step = 'seriousness'; await ctx.reply('قيّم مستوى جديتك بالدراسة:', buttons([['1', 'seriousness:1'], ['2', 'seriousness:2'], ['3', 'seriousness:3'], ['4', 'seriousness:4'], ['5', 'seriousness:5']])); });
+bot.action(/^seriousness:([1-5])$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.seriousness = Number(ctx.match[1]); await finishPreferences(ctx); });
 
 const port = Number(process.env.PORT || 3000);
 const healthServer = http.createServer((request, response) => {
@@ -316,7 +368,23 @@ const healthServer = http.createServer((request, response) => {
   return response.end(JSON.stringify({ error: 'not_found' }));
 });
 
+async function notifyExistingStudents() {
+  const { data, error } = await db.from('profiles').select('telegram_id').is('sessions_per_week', null).is('preferences_notified_at', null).limit(500);
+  if (error) return console.error('Could not find profiles needing preference updates:', error.message);
+  for (const student of data) {
+    try {
+      await bot.telegram.sendMessage(student.telegram_id, '✨ أضفنا أسئلة جديدة حتى نطلع لك شريك دراسة أدق. حدّث بياناتك بدقيقتين.', buttons([['📝 تحديث بياناتي', 'update_preferences']]));
+      await db.from('profiles').update({ preferences_notified_at: new Date().toISOString() }).eq('telegram_id', student.telegram_id);
+    } catch (error) {
+      console.error(`Could not notify ${student.telegram_id}:`, error.message);
+    }
+  }
+}
+
 healthServer.listen(port, '0.0.0.0', () => console.log(`Health check listening on :${port}`));
-bot.launch().then(() => console.log('Twinny bot is running with long polling.'));
+bot.launch().then(async () => {
+  console.log('Twinny bot is running with long polling.');
+  await notifyExistingStudents();
+});
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));

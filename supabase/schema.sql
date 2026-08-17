@@ -19,6 +19,14 @@ create table if not exists profiles (
   updated_at timestamptz not null default now()
 );
 
+-- Added after the first launch. Existing students can complete these from the bot.
+alter table profiles add column if not exists sessions_per_week smallint check (sessions_per_week between 1 and 7);
+alter table profiles add column if not exists session_duration smallint check (session_duration in (30, 45, 60, 90, 120));
+alter table profiles add column if not exists study_mode text check (study_mode in ('online', 'in_person', 'both'));
+alter table profiles add column if not exists partner_preference text check (partner_preference in ('study', 'accountability', 'both'));
+alter table profiles add column if not exists seriousness smallint check (seriousness between 1 and 5);
+alter table profiles add column if not exists preferences_notified_at timestamptz;
+
 create table if not exists connections (
   id bigint generated always as identity primary key,
   requester_telegram_id bigint not null references profiles(telegram_id) on delete cascade,
