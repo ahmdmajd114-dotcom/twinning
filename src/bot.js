@@ -83,7 +83,6 @@ async function rerankWithGroq(me, candidates) {
       headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: process.env.GROQ_MODEL || 'openai/gpt-oss-20b', temperature: 0.2, max_completion_tokens: 450,
-        response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: 'You rank study-partner candidates. Hard safety filters were already applied; never infer gender or add candidates. Rank using compatible study time, goals, commitment, learning style, academic stage, location and university. Return ONLY valid JSON exactly in this shape: {"matches":[{"id":"c1","reason":"سبب عربي قصير"}]}. Return every candidate ID once, and make each Arabic reason at most 18 words.' },
           { role: 'user', content: JSON.stringify(input) }
@@ -93,7 +92,10 @@ async function rerankWithGroq(me, candidates) {
     const responseText = await response.text();
     if (!response.ok) throw new Error(`Groq returned ${response.status}: ${responseText.slice(0, 400)}`);
     const result = JSON.parse(responseText);
-    const output = JSON.parse(result.choices?.[0]?.message?.content || '{}');
+    const content = result.choices?.[0]?.message?.content || '';
+    const json = content.match(/\{[\s\S]*\}/)?.[0];
+    if (!json) throw new Error('Groq returned no JSON ranking');
+    const output = JSON.parse(json);
     const allowed = new Map(candidates.map((candidate, index) => [`c${index + 1}`, candidate]));
     const ordered = [];
     for (const match of output.matches || []) {
