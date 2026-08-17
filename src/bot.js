@@ -34,6 +34,8 @@ const IRAQI_UNIVERSITIES = [
 ];
 const IRAQI_PRIVATE_INSTITUTIONS = ['جامعة المستقبل', 'جامعة وارث الأنبياء', 'جامعة العميد', 'جامعة الكفيل', 'جامعة العين العراقية', 'جامعة المعارف', 'جامعة الإسراء', 'جامعة البيان', 'جامعة الفراهيدي', 'جامعة الإمام جعفر الصادق', 'جامعة أهل البيت', 'جامعة الحلة', 'جامعة النور', 'جامعة الكوت', 'كلية التراث الجامعة', 'كلية المنصور الجامعة', 'كلية الرافدين الجامعة', 'كلية المأمون الجامعة', 'كلية شط العرب الجامعة', 'كلية دجلة الجامعة', 'كلية اليرموك الجامعة', 'كلية الحدباء الجامعة', 'كلية السلام الجامعة', 'كلية بغداد للعلوم الطبية', 'كلية بغداد للعلوم الاقتصادية', 'كلية الشيخ الطوسي الجامعة', 'كلية الحسين الجامعة', 'كلية الطف الجامعة', 'كلية الزهراوي الجامعة'];
 const CORE_MAJORS = ['طب عام', 'طب أسنان', 'صيدلة', 'تمريض', 'علوم طبية', 'طب بيطري', 'هندسة', 'علوم الحاسوب / تقنية معلومات', 'علوم', 'قانون', 'إدارة واقتصاد', 'تربية', 'زراعة'];
+const WEEK_DAYS = [['sat', 'السبت'], ['sun', 'الأحد'], ['mon', 'الاثنين'], ['tue', 'الثلاثاء'], ['wed', 'الأربعاء'], ['thu', 'الخميس'], ['fri', 'الجمعة']];
+const AVAILABILITY_SLOTS = [['early_morning', '6–9 صباحاً'], ['morning', '9–12 صباحاً'], ['noon', '12–3 ظهراً'], ['afternoon', '3–6 عصراً'], ['evening', '6–9 مساءً'], ['night', '9–12 ليلاً'], ['flexible', 'مرن']];
 const menu = Markup.keyboard([
   ['🔎 ابحث عن شريك', '🤝 طلباتي'],
   ['⚡ جاهز أدرس هسة', '⏱️ جلسة دراسة'],
@@ -74,6 +76,16 @@ function majorKey(value) {
 }
 function countryKey(value = '') { return normalise(value); }
 function studyFocusKey(value = '') { return normalise(value); }
+function sharedValues(left, right) {
+  const leftValues = Array.isArray(left) ? left : [];
+  const rightValues = new Set(Array.isArray(right) ? right : []);
+  return leftValues.filter((value) => rightValues.has(value));
+}
+function availabilitySummary(profile) {
+  const days = sharedValues(profile.available_days, WEEK_DAYS.map(([id]) => id)).map((id) => WEEK_DAYS.find(([day]) => day === id)?.[1]).filter(Boolean);
+  const slots = sharedValues(profile.available_slots, AVAILABILITY_SLOTS.map(([id]) => id)).map((id) => labels[id]).filter(Boolean);
+  return [...days, ...slots].join(' · ');
+}
 function aiProfile(profile, id) {
   return {
     id,
@@ -92,7 +104,10 @@ function aiProfile(profile, id) {
     session_duration: profile.session_duration,
     study_mode: profile.study_mode,
     partner_preference: profile.partner_preference,
-    seriousness: profile.seriousness
+    seriousness: profile.seriousness,
+    available_days: Array.isArray(profile.available_days) ? profile.available_days : [],
+    available_slots: Array.isArray(profile.available_slots) ? profile.available_slots : [],
+    reliability: profile.reliability ?? 50
   };
 }
 async function rerankWithGroq(me, candidates) {
@@ -111,7 +126,7 @@ async function rerankWithGroq(me, candidates) {
       body: JSON.stringify({
         model: process.env.GROQ_MODEL || 'openai/gpt-oss-20b', temperature: 0.2, reasoning_effort: 'low', max_completion_tokens: 900,
         messages: [
-          { role: 'system', content: 'You rank study-partner candidates. Hard safety filters were already applied; never infer gender or add candidates. Rank using compatible study time, goals, commitment, learning style, academic stage, location, university, current study focus, and previous-course grades. Grades should improve compatibility only when they indicate relevant shared subjects or comparable academic needs; never mention exact grades in the reason. Return ONLY lines in this exact format, one for every candidate and nothing else: c1 | سبب عربي قصير. Make each reason at most 18 Arabic words.' },
+          { role: 'system', content: 'You rank study-partner candidates. Hard safety filters were already applied; never infer gender or add candidates. Rank primarily by overlapping available_days and available_slots, then goals, commitment/reliability, learning style, academic stage, location, university, current study focus, and previous-course grades. Grades should improve compatibility only when they indicate relevant shared subjects or comparable academic needs; never mention exact grades in the reason. Return ONLY lines in this exact format, one for every candidate and nothing else: c1 | سبب عربي قصير. Make each reason at most 18 Arabic words.' },
           { role: 'user', content: JSON.stringify(input) }
         ]
       })
@@ -139,21 +154,53 @@ async function rerankWithGroq(me, candidates) {
     return candidates;
   }
 }
+async function enrichReliability(candidate) {
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const [{ data: ratings, error: ratingsError }, { data: sessions, error: sessionsError }, { data: reminders, error: remindersError }] = await Promise.all([
+    db.from('ratings').select('stars, commitment').eq('reviewed_telegram_id', candidate.telegram_id).gte('created_at', since),
+    db.from('study_sessions').select('status, starter_telegram_id, starter_completed_at, recipient_telegram_id, recipient_completed_at').or(`starter_telegram_id.eq.${candidate.telegram_id},recipient_telegram_id.eq.${candidate.telegram_id}`).gte('started_at', since),
+    db.from('study_reminders').select('id').or(`creator_telegram_id.eq.${candidate.telegram_id},recipient_telegram_id.eq.${candidate.telegram_id}`).gte('reminder_at', since)
+  ]);
+  if (ratingsError || sessionsError || remindersError) return { ...candidate, reliability: 50 };
+  let total = 0; let weight = 0;
+  if (ratings?.length) {
+    const stars = ratings.reduce((sum, rating) => sum + rating.stars, 0) / ratings.length;
+    const commitment = ratings.filter((rating) => rating.commitment === 'committed').length / ratings.length;
+    total += ((stars / 5) * 0.7 + commitment * 0.3) * 45; weight += 45;
+  }
+  if (sessions?.length) {
+    const completed = sessions.filter((row) => row.status === 'completed').length / sessions.length;
+    const reflected = sessions.filter((row) => row.starter_telegram_id === candidate.telegram_id ? row.starter_completed_at : row.recipient_completed_at).length / sessions.length;
+    total += (completed * 0.55 + reflected * 0.45) * 40; weight += 40;
+  }
+  if (reminders?.length) {
+    const ids = reminders.map((reminder) => reminder.id);
+    const { data: checkins } = await db.from('reminder_checkins').select('reminder_id').eq('telegram_id', candidate.telegram_id).in('reminder_id', ids);
+    total += ((checkins?.length || 0) / reminders.length) * 15; weight += 15;
+  }
+  return { ...candidate, reliability: weight ? Math.round((total / weight) * 100) : 50 };
+}
 function score(me, candidate) {
   let value = 20;
-  if (countryKey(me.country || 'العراق') === countryKey(candidate.country || 'العراق')) value += 10;
-  if (countryKey(me.country || 'العراق') === countryKey(candidate.country || 'العراق') && governorateKey(me.city) === governorateKey(candidate.city)) value += 22;
-  if (universityKey(me.university) === universityKey(candidate.university)) value += 24;
-  if (majorKey(me.major) === majorKey(candidate.major)) value += 16;
-  if (me.academic_year === candidate.academic_year) value += 8;
-  if (me.study_time === candidate.study_time) value += 5;
-  if (me.learning_style === candidate.learning_style) value += 3;
+  const sameCountry = countryKey(me.country || 'العراق') === countryKey(candidate.country || 'العراق');
+  if (sameCountry) value += 5;
+  if (sameCountry && governorateKey(me.city) === governorateKey(candidate.city)) value += 7;
+  if (universityKey(me.university) === universityKey(candidate.university)) value += 9;
+  if (majorKey(me.major) === majorKey(candidate.major)) value += 8;
+  if (me.academic_year === candidate.academic_year) value += 7;
   if (me.study_focus && candidate.study_focus && studyFocusKey(me.study_focus) === studyFocusKey(candidate.study_focus)) value += 8;
+  const sharedDays = sharedValues(me.available_days, candidate.available_days).length;
+  const sharedSlots = sharedValues(me.available_slots, candidate.available_slots).length;
+  if (sharedDays) value += Math.min(12, sharedDays * 4);
+  if (sharedSlots) value += Math.min(12, sharedSlots * 5);
+  if (!sharedSlots && me.study_time === candidate.study_time) value += 4;
+  if (me.learning_style === candidate.learning_style) value += 3;
   if (Math.abs(ageFrom(me.birth_year) - ageFrom(candidate.birth_year)) <= 2) value += 2;
-  if (me.study_mode && me.study_mode === candidate.study_mode) value += 7;
-  if (me.partner_preference && me.partner_preference === candidate.partner_preference) value += 5;
-  if (me.sessions_per_week && Math.abs(me.sessions_per_week - candidate.sessions_per_week) <= 1) value += 5;
-  if (me.seriousness && Math.abs(me.seriousness - candidate.seriousness) <= 1) value += 3;
+  if (me.study_mode && me.study_mode === candidate.study_mode) value += 5;
+  if (me.partner_preference && me.partner_preference === candidate.partner_preference) value += 3;
+  if (me.sessions_per_week && Math.abs(me.sessions_per_week - candidate.sessions_per_week) <= 1) value += 3;
+  if (me.seriousness && Math.abs(me.seriousness - candidate.seriousness) <= 1) value += 2;
+  value += Math.round(((candidate.reliability ?? 50) - 50) * 0.12);
   return Math.min(value, 100);
 }
 async function profile(id) {
@@ -189,6 +236,26 @@ async function startPreferenceQuestions(ctx, flow, form = {}) {
   ctx.session = { flow, step: 'sessions_per_week', form };
   return ctx.reply('كم جلسة دراسة تريد بالأسبوع؟', buttons([['جلسة واحدة', 'sessions:1'], ['جلستان', 'sessions:2'], ['3 جلسات', 'sessions:3'], ['4 جلسات', 'sessions:4'], ['5 جلسات أو أكثر', 'sessions:5']]));
 }
+async function renderAvailabilityDays(ctx, edit = false) {
+  const selected = new Set(ctx.session.form.available_days || []);
+  const items = [...WEEK_DAYS.map(([id, label]) => [`${selected.has(id) ? '✅ ' : ''}${label}`, `availability_day:${id}`]), ['تم اختيار الأيام ✅', 'availability_days_done']];
+  const text = `اختَر الأيام التي تقدر تدرس بها (تگدر تختار أكثر من يوم):\n${selected.size ? `المختار: ${[...selected].map((id) => WEEK_DAYS.find(([day]) => day === id)?.[1]).join('، ')}` : 'ما اخترت أيام بعد.'}`;
+  const markup = grid(items);
+  if (!edit) return ctx.reply(text, markup);
+  try { return await ctx.editMessageText(text, markup); } catch { return ctx.reply(text, markup); }
+}
+async function renderAvailabilitySlots(ctx, edit = false) {
+  const selected = new Set(ctx.session.form.available_slots || []);
+  const items = [...AVAILABILITY_SLOTS.map(([id, label]) => [`${selected.has(id) ? '✅ ' : ''}${label}`, `availability_slot:${id}`]), ['تم اختيار الأوقات ✅', 'availability_slots_done']];
+  const text = `اختَر الأوقات المتاحة غالباً (تگدر تختار أكثر من وقت):\n${selected.size ? `المختار: ${[...selected].map((id) => labels[id]).join('، ')}` : 'ما اخترت أوقات بعد.'}`;
+  const markup = grid(items);
+  if (!edit) return ctx.reply(text, markup);
+  try { return await ctx.editMessageText(text, markup); } catch { return ctx.reply(text, markup); }
+}
+async function startAvailabilityQuestions(ctx, flow, form = {}) {
+  ctx.session = { flow, step: 'availability_days', form: { ...form, available_days: form.available_days || [], available_slots: form.available_slots || [] } };
+  return renderAvailabilityDays(ctx);
+}
 async function showUpdateMenu(ctx) {
   return ctx.reply('شنو تحب تحدّث من بياناتك؟', Markup.inlineKeyboard([
     [Markup.button.callback('الاسم الحقيقي', 'edit:real_name'), Markup.button.callback('المكان', 'edit:location')],
@@ -196,8 +263,8 @@ async function showUpdateMenu(ctx) {
     [Markup.button.callback('المرحلة الدراسية', 'edit:academic_year'), Markup.button.callback('وقت الدراسة', 'edit:study_time')],
     [Markup.button.callback('أسلوب التعلّم', 'edit:learning_style'), Markup.button.callback('الهدف الدراسي', 'edit:goal')],
     [Markup.button.callback('شنو تدرس/تحضّر؟', 'edit:study_focus'), Markup.button.callback('التقديرات السابقة', 'edit:previous_grades')],
-    [Markup.button.callback('تفضيلات التوافق', 'edit:preferences'), Markup.button.callback('الجنس', 'edit:gender')],
-    [Markup.button.callback('سنة الميلاد', 'edit:birth_year')]
+    [Markup.button.callback('تفضيلات التوافق', 'edit:preferences'), Markup.button.callback('الأيام والأوقات المتاحة', 'edit:availability')],
+    [Markup.button.callback('الجنس', 'edit:gender'), Markup.button.callback('سنة الميلاد', 'edit:birth_year')],
   ]));
 }
 async function saveProfileField(ctx, field, value) {
@@ -233,7 +300,7 @@ bot.start(async (ctx) => {
 
 bot.command('profile', async (ctx) => {
   const me = await ensureRegistered(ctx); if (!me) return;
-  await ctx.reply(`ملفك\nالاسم الظاهر: ${me.pseudonym}\n${me.major} · ${me.academic_year}\n${me.university}، ${me.country || 'العراق'} · ${me.city}${me.study_focus ? `\nتدرس/تحضّر: ${me.study_focus}` : ''}${me.previous_grades ? `\nتقديراتك السابقة: ${me.previous_grades}` : ''}\nوقت الدراسة: ${labels[me.study_time] || me.study_time}\nأسلوبك: ${labels[me.learning_style]}${me.sessions_per_week ? `\n${me.sessions_per_week} جلسات/أسبوع · ${labels[me.study_mode] || me.study_mode}` : '\n📝 حدّث بياناتك حتى نحسن التوافق.'}`, menu);
+  await ctx.reply(`ملفك\nالاسم الظاهر: ${me.pseudonym}\n${me.major} · ${me.academic_year}\n${me.university}، ${me.country || 'العراق'} · ${me.city}${me.study_focus ? `\nتدرس/تحضّر: ${me.study_focus}` : ''}${me.previous_grades ? `\nتقديراتك السابقة: ${me.previous_grades}` : ''}\nوقت الدراسة: ${labels[me.study_time] || me.study_time}\nأسلوبك: ${labels[me.learning_style]}${me.sessions_per_week ? `\n${me.sessions_per_week} جلسات/أسبوع · ${labels[me.study_mode] || me.study_mode}` : '\n📝 حدّث بياناتك حتى نحسن التوافق.'}${availabilitySummary(me) ? `\n🗓 توفرك: ${availabilitySummary(me)}` : '\n🗓 حدّد أيامك وأوقاتك المتاحة حتى تقوى التوأمة.'}`, menu);
 });
 bot.command('find', findMatches);
 bot.command('matches', showConnections);
@@ -243,7 +310,8 @@ async function findMatches(ctx) {
   const me = await ensureRegistered(ctx); if (!me) return;
   const { data: people, error } = await db.from('profiles').select('*').eq('gender', me.gender).eq('is_active', true).neq('telegram_id', me.telegram_id);
   if (error) throw error;
-  const deterministic = people.sort((a, b) => score(me, b) - score(me, a)).slice(0, 10);
+  const enrichedPeople = await Promise.all(people.map(enrichReliability));
+  const deterministic = enrichedPeople.sort((a, b) => score(me, b) - score(me, a)).slice(0, 10);
   const candidates = (await rerankWithGroq(me, deterministic)).slice(0, 3);
   if (!candidates.length) return ctx.reply('حالياً ماكو طالب مناسب ضمن نفس الجنس. جرّب لاحقاً، واحنا نوسع المجتمع يومياً.', menu);
   for (const person of candidates) {
@@ -255,9 +323,10 @@ async function findMatches(ctx) {
     const preferences = person.sessions_per_week
       ? `\n📅 الجلسات: ${person.sessions_per_week} بالأسبوع · ${labels[person.session_duration] || `${person.session_duration} دقيقة`}\n💻 نمط الدراسة: ${labels[person.study_mode] || person.study_mode}\n🤝 يريد من الشريك: ${person.partner_preference === 'both' ? 'الاثنين' : labels[person.partner_preference]}\n⭐ مستوى الجدية: ${'⭐'.repeat(person.seriousness)}`
       : '\n📝 لم يحدّث تفضيلات الدراسة بعد.';
+    const availability = availabilitySummary(person) ? `\n🗓 التوفر: ${availabilitySummary(person)}` : '\n🗓 لم يحدّد أيامه وأوقاته بعد.';
     const aiReason = person.aiReason ? `\n🤖 سبب الاقتراح: ${person.aiReason}` : '';
     const rating = average === 'جديد' ? 'جديد — لا توجد تقييمات بعد' : `${average} / 5 · ${ratings.length} تقييم · ملتزم: ${committed}`;
-    await ctx.reply(`👤 شريك دراسة مقترح\n━━━━━━━━━━━━\n🏷 الاسم الظاهر: ${person.pseudonym}\n🎓 التخصص والمرحلة: ${person.major} · ${person.academic_year}\n🏛 الجامعة: ${person.university}\n📍 المكان: ${person.country || 'العراق'} · ${person.city}${studyFocus}${grades}\n━━━━━━━━━━━━\n⏰ وقت الدراسة: ${labels[person.study_time] || person.study_time}\n🧠 أسلوب الدراسة: ${labels[person.learning_style]}${preferences}\n━━━━━━━━━━━━\n✨ نسبة التوافق: ${score(me, person)}٪${aiReason}\n⭐ التقييم: ${rating}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
+    await ctx.reply(`👤 شريك دراسة مقترح\n━━━━━━━━━━━━\n🏷 الاسم الظاهر: ${person.pseudonym}\n🎓 التخصص والمرحلة: ${person.major} · ${person.academic_year}\n🏛 الجامعة: ${person.university}\n📍 المكان: ${person.country || 'العراق'} · ${person.city}${studyFocus}${grades}\n━━━━━━━━━━━━\n⏰ وقت الدراسة: ${labels[person.study_time] || person.study_time}\n🧠 أسلوب الدراسة: ${labels[person.learning_style]}${preferences}${availability}\n🏅 مؤشر الالتزام الفعلي: ${person.reliability}٪\n━━━━━━━━━━━━\n✨ نسبة التوافق: ${score(me, person)}٪${aiReason}\n⭐ التقييم: ${rating}`, buttons([['أرسل طلب تعارف 🤝', `request:${person.telegram_id}`]]));
   }
 }
 
@@ -499,13 +568,42 @@ async function processStudyAutomation() {
 bot.on('callback_query', async (ctx, next) => {
   const data = ctx.callbackQuery.data;
   await ctx.answerCbQuery();
-  const registrationButton = /^(gender|year|time|style|sessions|duration|mode|preference|seriousness):/.test(data) || data === 'year_custom';
+  const registrationButton = /^(gender|year|time|style|sessions|duration|mode|preference|seriousness|availability_day|availability_slot):/.test(data) || ['year_custom', 'availability_days_done', 'availability_slots_done'].includes(data);
   if (registrationButton && !ctx.session?.form) {
     return ctx.reply('انتهت جلسة التسجيل السابقة بسبب إعادة تشغيل البوت. اكتب /start ونبدأ من جديد 👋');
   }
   if (data === 'update_preferences') {
     const me = await ensureRegistered(ctx); if (!me) return;
     return showUpdateMenu(ctx);
+  }
+  if (data === 'update_availability') {
+    const me = await ensureRegistered(ctx); if (!me) return;
+    return startAvailabilityQuestions(ctx, 'update_preferences', { available_days: me.available_days || [], available_slots: me.available_slots || [] });
+  }
+  if (data.startsWith('availability_day:')) {
+    const day = data.split(':')[1];
+    if (!WEEK_DAYS.some(([id]) => id === day)) return ctx.reply('هذا اليوم غير متاح.');
+    const selected = new Set(ctx.session.form.available_days || []);
+    selected.has(day) ? selected.delete(day) : selected.add(day);
+    ctx.session.form.available_days = [...selected];
+    return renderAvailabilityDays(ctx, true);
+  }
+  if (data === 'availability_days_done') {
+    if (!(ctx.session.form.available_days || []).length) return ctx.reply('اختَر يوم واحد على الأقل.');
+    ctx.session.step = 'availability_slots';
+    return renderAvailabilitySlots(ctx, true);
+  }
+  if (data.startsWith('availability_slot:')) {
+    const slot = data.split(':')[1];
+    if (!AVAILABILITY_SLOTS.some(([id]) => id === slot)) return ctx.reply('هذا الوقت غير متاح.');
+    const selected = new Set(ctx.session.form.available_slots || []);
+    selected.has(slot) ? selected.delete(slot) : selected.add(slot);
+    ctx.session.form.available_slots = [...selected];
+    return renderAvailabilitySlots(ctx, true);
+  }
+  if (data === 'availability_slots_done') {
+    if (!(ctx.session.form.available_slots || []).length) return ctx.reply('اختَر وقت واحد على الأقل.');
+    return finishPreferences(ctx);
   }
   if (data.startsWith('location:')) {
     if (!ctx.session?.form && ctx.session?.flow !== 'edit_location') return ctx.reply('ابدأ التسجيل عبر /start أولاً.');
@@ -563,6 +661,7 @@ bot.on('callback_query', async (ctx, next) => {
     if (field === 'university') { ctx.session = { flow: 'edit_profile', field }; return showUniversityGroup(ctx); }
     if (field === 'major') { ctx.session = { flow: 'edit_profile', field }; return showMajorChoice(ctx); }
     if (field === 'preferences') return startPreferenceQuestions(ctx, 'update_preferences');
+    if (field === 'availability') return startAvailabilityQuestions(ctx, 'update_preferences', { available_days: me.available_days || [], available_slots: me.available_slots || [] });
     if (field === 'gender') return ctx.reply('حدّد جنسك:', buttons([['بنت', 'edit_gender:female'], ['ولد', 'edit_gender:male']]));
     if (field === 'birth_year') { ctx.session = { flow: 'edit_profile', field }; return ctx.reply('اكتب سنة ميلادك:'); }
     if (field === 'academic_year') return showAcademicYearChoice(ctx, 'edit_year');
@@ -853,7 +952,7 @@ bot.action(/^sessions:(\d+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.s
 bot.action(/^duration:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); if (ctx.match[1] === 'custom') { ctx.session.step = 'session_duration_custom'; return ctx.reply('اكتب المدة بالدقائق، من 10 إلى 240:'); } ctx.session.form.session_duration = Number(ctx.match[1]); ctx.session.step = 'study_mode'; await ctx.reply('تفضّل الدراسة شلون؟', grid([['أونلاين', 'mode:online'], ['حضوري', 'mode:in_person'], ['الاثنين', 'mode:both'], ['نمط آخر ✏️', 'mode:custom']])); });
 bot.action(/^mode:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); if (ctx.match[1] === 'custom') { ctx.session.step = 'study_mode_custom'; return ctx.reply('اكتب نمط الدراسة الذي تفضّله:'); } ctx.session.form.study_mode = ctx.match[1]; ctx.session.step = 'partner_preference'; await ctx.reply('شنو تريد من شريكك أكثر؟', buttons([['مذاكرة فعلية', 'preference:study'], ['التزام ومتابعة', 'preference:accountability'], ['الاثنين', 'preference:both']])); });
 bot.action(/^preference:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.partner_preference = ctx.match[1]; ctx.session.step = 'seriousness'; await ctx.reply('قيّم مستوى جديتك بالدراسة:', buttons([['1', 'seriousness:1'], ['2', 'seriousness:2'], ['3', 'seriousness:3'], ['4', 'seriousness:4'], ['5', 'seriousness:5']])); });
-bot.action(/^seriousness:([1-5])$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.seriousness = Number(ctx.match[1]); await finishPreferences(ctx); });
+bot.action(/^seriousness:([1-5])$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.seriousness = Number(ctx.match[1]); await startAvailabilityQuestions(ctx, ctx.session.flow, ctx.session.form); });
 
 const port = Number(process.env.PORT || 3000);
 const healthServer = http.createServer((request, response) => {
@@ -877,6 +976,18 @@ async function notifyExistingStudents() {
     }
   }
 }
+async function notifyAvailabilityUpdates() {
+  const { data, error } = await db.from('profiles').select('telegram_id').is('available_days', null).is('availability_notified_at', null).limit(500);
+  if (error) return console.error('Could not find profiles needing availability updates:', error.message);
+  for (const student of data) {
+    try {
+      await bot.telegram.sendMessage(student.telegram_id, '🗓 حتى نخلي توأمتك أدق، حدّد الأيام والأوقات المتاحة للدراسة.', buttons([['حدّث التوفر', 'update_availability']]));
+      await db.from('profiles').update({ availability_notified_at: new Date().toISOString() }).eq('telegram_id', student.telegram_id);
+    } catch (error) {
+      console.error(`Could not notify availability update for ${student.telegram_id}:`, error.message);
+    }
+  }
+}
 
 healthServer.listen(port, '0.0.0.0', () => console.log(`Health check listening on :${port}`));
 let shuttingDown = false;
@@ -887,6 +998,7 @@ async function startBot() {
     await bot.launch();
     console.log('Twinny bot is running with long polling.');
     await notifyExistingStudents();
+    await notifyAvailabilityUpdates();
     await processStudyAutomation().catch((error) => console.error('Study automation failed:', error.message));
     if (!automationTimer) automationTimer = setInterval(() => processStudyAutomation().catch((error) => console.error('Study automation failed:', error.message)), 60_000);
   } catch (error) {

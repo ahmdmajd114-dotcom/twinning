@@ -29,6 +29,9 @@ alter table profiles add column if not exists study_focus text;
 alter table profiles add column if not exists previous_grades text;
 alter table profiles add column if not exists preferences_notified_at timestamptz;
 alter table profiles add column if not exists country text not null default 'العراق';
+alter table profiles add column if not exists available_days text[];
+alter table profiles add column if not exists available_slots text[];
+alter table profiles add column if not exists availability_notified_at timestamptz;
 
 -- Allow fixed choices plus a user-entered duration or study mode when needed.
 alter table profiles drop constraint if exists profiles_session_duration_check;
