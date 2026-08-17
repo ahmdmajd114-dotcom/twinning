@@ -17,14 +17,12 @@ const labels = {
   visual: 'بصري', reading: 'قراءة وكتابة', discussion: 'نقاش', practice: 'تطبيق وحل أسئلة',
   exam: 'تحضير للامتحانات', routine: 'التزام بروتين', assignments: 'واجبات ومشاريع', revise: 'مراجعة'
 };
-const aliasFirst = ['نور', 'أفق', 'نجمة', 'قمر', 'ورد', 'فجر', 'نهر', 'سحاب', 'رونق', 'صفاء'];
-const aliasLast = ['المجتهد', 'الهادئ', 'الطموح', 'المثابر', 'المنظم', 'الفضولي', 'المبدع', 'المرتاح'];
 const buttons = (items) => Markup.inlineKeyboard(items.map(([text, value]) => [Markup.button.callback(text, value)]));
 const menu = Markup.keyboard([['🔎 ابحث عن شريك', '🤝 طلباتي'], ['✉️ راسل شريكاً', '🔐 كشف هويتي'], ['📋 مهامنا', '➕ مهمة'], ['⏱️ جلسة دراسة', '👤 ملفي'], ['⭐ قيّم شريكاً', '🗑️ حذف حسابي']]).resize();
 
 function aliasFor(id) {
   const n = Math.abs(Number(BigInt(id) % 10000n));
-  return `${aliasFirst[n % aliasFirst.length]} ${aliasLast[Math.floor(n / aliasFirst.length) % aliasLast.length]} ${String(n).padStart(4, '0')}`;
+  return `Twinny ${String(n).padStart(4, '0')}`;
 }
 function ageFrom(year) { return new Date().getFullYear() - Number(year); }
 function score(me, candidate) {
@@ -50,7 +48,7 @@ async function ensureRegistered(ctx) {
 }
 function startRegistration(ctx) {
   ctx.session = { flow: 'register', step: 'real_name', form: {} };
-  return ctx.reply('أهلاً بك في Twinny 👋\nاسمك الحقيقي يُحفظ داخل النظام فقط ولن يظهر في الاقتراحات.\n\nاكتب اسمك الحقيقي:');
+  return ctx.reply('أهلاً بك في Twinny 👋\nيلا ندخل بياناتك حتى نجد لك أفضل شريك دراسي مناسب.\n\nاكتب اسمك الحقيقي:');
 }
 async function finishRegistration(ctx) {
   const form = ctx.session.form;
@@ -58,7 +56,7 @@ async function finishRegistration(ctx) {
   const { error } = await db.from('profiles').upsert(row, { onConflict: 'telegram_id' });
   if (error) throw error;
   ctx.session = {};
-  await ctx.reply(`تم إنشاء ملفك بنجاح ✅\nاسمك الظاهر للطلاب: ${row.pseudonym}\n\nنطابقك فقط مع طلاب من نفس الجنس، ولا نعرض اسمك الحقيقي.`, menu);
+  await ctx.reply(`تم إنشاء حسابك بنجاح ✅\nاسمك الظاهر للطلاب: ${row.pseudonym}\n\nراح نحاول نجد لك أفضل شريك دراسي مناسب. من الأزرار اختَر «🔎 ابحث عن شريك».`, menu);
 }
 
 bot.use(session());
