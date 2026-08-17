@@ -296,12 +296,14 @@ bot.on('text', async (ctx) => {
   if (s.step === 'birth_year') { const year = Number(text); if (!Number.isInteger(year) || ageFrom(year) < 16 || ageFrom(year) > 60) return ctx.reply('اكتب سنة ميلاد صحيحة (العمر المسموح من 16 إلى 60).'); s.form.birth_year = year; s.step = 'city'; return ctx.reply('اكتب محافظتك:'); }
   if (s.step === 'city') { s.form.city = text; s.step = 'university'; return ctx.reply('اكتب اسم الجامعة أو المعهد:'); }
   if (s.step === 'university') { s.form.university = text; s.step = 'major'; return ctx.reply('اكتب تخصصك:'); }
-  if (s.step === 'major') { s.form.major = text; s.step = 'academic_year'; return ctx.reply('أي مرحلة دراسية؟', buttons([['الأولى', 'year:الأولى'], ['الثانية', 'year:الثانية'], ['الثالثة', 'year:الثالثة'], ['الرابعة+', 'year:الرابعة فما فوق']])); }
+  if (s.step === 'major') { s.form.major = text; s.step = 'academic_year'; return ctx.reply('أي مرحلة دراسية؟', buttons([['الأولى', 'year:الأولى'], ['الثانية', 'year:الثانية'], ['الثالثة', 'year:الثالثة'], ['الرابعة', 'year:الرابعة'], ['الخامسة', 'year:الخامسة'], ['السادسة', 'year:السادسة'], ['تحديد آخر ✏️', 'year_custom']])); }
+  if (s.step === 'academic_year_custom') { s.form.academic_year = text; s.step = 'study_time'; return ctx.reply('متى تفضّل الدراسة غالباً؟', buttons([['صباحاً', 'time:morning'], ['ظهراً', 'time:afternoon'], ['مساءً', 'time:evening'], ['مرن', 'time:flexible']])); }
   if (s.step === 'goal') { s.form.goal = text; return finishRegistration(ctx); }
 });
 
 // Registration callbacks are separate so all selection questions remain button-only.
 bot.action(/^gender:(female|male)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.gender = ctx.match[1]; ctx.session.step = 'birth_year'; await ctx.reply('اكتب سنة ميلادك (مثال: 2004):'); });
+bot.action('year_custom', async (ctx) => { await ctx.answerCbQuery(); ctx.session.step = 'academic_year_custom'; await ctx.reply('اكتب مرحلتك الدراسية أو الوصف الذي يناسبك:'); });
 bot.action(/^year:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.academic_year = ctx.match[1]; ctx.session.step = 'study_time'; await ctx.reply('متى تفضّل الدراسة غالباً؟', buttons([['صباحاً', 'time:morning'], ['ظهراً', 'time:afternoon'], ['مساءً', 'time:evening'], ['مرن', 'time:flexible']])); });
 bot.action(/^time:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.study_time = ctx.match[1]; ctx.session.step = 'learning_style'; await ctx.reply('شنو أسلوبك المفضل؟', buttons([['بصري', 'style:visual'], ['قراءة وكتابة', 'style:reading'], ['نقاش', 'style:discussion'], ['حل أسئلة', 'style:practice']])); });
 bot.action(/^style:(.+)$/, async (ctx) => { await ctx.answerCbQuery(); ctx.session.form.learning_style = ctx.match[1]; ctx.session.step = 'goal'; await ctx.reply('شنو هدفك الأساسي من شريك الدراسة؟ مثال: التزام 3 جلسات بالأسبوع أو تحضير للفاينل'); });
