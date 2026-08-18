@@ -452,11 +452,13 @@ async function showConnections(ctx) {
   for (const item of data) {
     const otherId = item.requester_telegram_id === me.telegram_id ? item.recipient_telegram_id : item.requester_telegram_id;
     const other = await profile(otherId);
-    const state = item.status === 'pending' ? 'قيد الانتظار' : item.status === 'accepted' ? 'تم القبول ✅' : 'مرفوض';
+    const state = item.status === 'pending' ? 'قيد الانتظار' : item.status === 'accepted' ? 'شراكة قائمة ✅' : item.status === 'cancelled' ? 'انتهت الشراكة' : 'مرفوض';
     const actions = item.status === 'pending' && item.recipient_telegram_id === me.telegram_id
       ? buttons([['أقبل ✅', `accept:${item.id}`], ['أرفض', `reject:${item.id}`]])
       : item.status === 'pending' && item.requester_telegram_id === me.telegram_id
-        ? buttons([['إلغاء الطلب', `cancel_request:${item.id}`]]) : undefined;
+        ? buttons([['إلغاء الطلب', `cancel_request:${item.id}`]])
+        : item.status === 'accepted'
+          ? buttons([['إنهاء الشراكة', `end_connection:${item.id}`]]) : undefined;
     if (item.status === 'pending' && item.recipient_telegram_id === me.telegram_id && other) {
       await ctx.reply(await incomingRequestProfileText(other), actions);
     } else await ctx.reply(`${other?.pseudonym ?? 'طالب'} — ${state}`, actions);
@@ -915,6 +917,14 @@ bot.on('callback_query', async (ctx, next) => {
     if (error) throw error;
     return ctx.reply('تم إلغاء طلب التعارف.');
   }
+  if (data.startsWith('end_connection:')) {
+    const id = Number(data.split(':')[1]);
+    const { data: connection, error } = await db.from('connections').select('id').eq('id', id).eq('status', 'accepted').or(`requester_telegram_id.eq.${ctx.from.id},recipient_telegram_id.eq.${ctx.from.id}`).maybeSingle();
+    if (error) throw error;
+    if (!connection) return ctx.reply('هذه الشراكة غير متاحة أو منتهية بالفعل.');
+    ctx.session = { flow: 'end_connection', connectionId: id };
+    return ctx.reply('اكتب سبب إنهاء الشراكة باختصار. هذا يساعدنا نحسن التوافقية، وما راح ينعرض للشريك.');
+  }
   if (data === 'open_requests') return showConnections(ctx);
   if (data.startsWith('accept:') || data.startsWith('reject:')) {
     const [action, id] = data.split(':');
@@ -1174,6 +1184,18 @@ bot.on('text', async (ctx) => {
   if (ctx.session?.flow === 'message') {
     await sendRelay(ctx, ctx.session.connectionId, ctx.session.recipientId, text);
     ctx.session = {}; return ctx.reply('تم إرسال رسالتك ✉️', menu);
+  }
+  if (ctx.session?.flow === 'end_connection') {
+    if (text.length < 3 || text.length > 500) return ctx.reply('اكتب سبباً مختصراً من 3 إلى 500 حرف.');
+    const { data: connection, error: connectionError } = await db.from('connections').select('*').eq('id', ctx.session.connectionId).eq('status', 'accepted').or(`requester_telegram_id.eq.${ctx.from.id},recipient_telegram_id.eq.${ctx.from.id}`).maybeSingle();
+    if (connectionError) throw connectionError;
+    if (!connection) { ctx.session = {}; return ctx.reply('هذه الشراكة منتهية بالفعل.', menu); }
+    const { error } = await db.from('connections').update({ status: 'cancelled', cancelled_by_telegram_id: ctx.from.id, cancellation_reason: text, cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', connection.id).eq('status', 'accepted');
+    if (error) throw error;
+    const partnerId = connection.requester_telegram_id === ctx.from.id ? connection.recipient_telegram_id : connection.requester_telegram_id;
+    ctx.session = {};
+    await bot.telegram.sendMessage(partnerId, 'انتهت شراكتكم الدراسية. تكدر تبحث عن شريك آخر من زر «🔎 ابحث عن شريك».', menu);
+    return ctx.reply('تم إنهاء الشراكة. سببك انحفظ لتحسين التوافقية، وتكدر هسه تبحث عن شريك آخر من «🔎 ابحث عن شريك».', menu);
   }
   if (ctx.session?.flow === 'question_setup' && ctx.session.step === 'topic') {
     if (!text || text.length > 180) return ctx.reply('اكتب موضوعاً مختصراً، حتى 180 حرف.');

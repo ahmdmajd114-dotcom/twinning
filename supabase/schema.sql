@@ -53,6 +53,13 @@ create table if not exists connections (
   check (requester_telegram_id <> recipient_telegram_id)
 );
 
+-- A partnership can be ended without deleting its historic sessions, tasks, or ratings.
+alter table connections add column if not exists cancelled_by_telegram_id bigint references profiles(telegram_id) on delete set null;
+alter table connections add column if not exists cancellation_reason text;
+alter table connections add column if not exists cancelled_at timestamptz;
+alter table connections drop constraint if exists connections_status_check;
+alter table connections add constraint connections_status_check check (status in ('pending', 'accepted', 'rejected', 'cancelled'));
+
 create table if not exists ratings (
   id bigint generated always as identity primary key,
   connection_id bigint not null references connections(id) on delete cascade,
