@@ -9,6 +9,7 @@ const missing = required.filter((key) => !process.env[key]);
 if (missing.length) throw new Error(`Missing environment variables: ${missing.join(', ')}`);
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
+const supportAdminId = Number(process.env.SUPPORT_ADMIN_TELEGRAM_ID || 0);
 const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false }
 });
@@ -46,6 +47,7 @@ const menu = Markup.keyboard([
   ['📊 تقريرنا', '✉️ راسل شريكاً'],
   ['🔐 كشف هويتي', '📝 تحديث بياناتي'],
   ['👤 ملفي', '⭐ قيّم شريكاً'],
+  ['🆘 تواصل مع الدعم'],
   ['🗑️ حذف حسابي']
 ]).resize();
 
@@ -341,6 +343,7 @@ bot.start(async (ctx) => {
   if (me) return ctx.reply(`هلا ${me.real_name} 👋 استخدم الأزرار حتى نبحث لك عن شريك دراسة.`, menu);
   return startRegistration(ctx);
 });
+bot.command('myid', async (ctx) => ctx.reply(`معرّف Telegram الخاص بك: ${ctx.from.id}\nاستخدمه في Render كقيمة SUPPORT_ADMIN_TELEGRAM_ID إذا تريد تستلم رسائل الدعم.`));
 
 bot.command('profile', async (ctx) => {
   const me = await ensureRegistered(ctx); if (!me) return;
@@ -724,6 +727,13 @@ async function processStudyAutomation() {
 bot.on('callback_query', async (ctx, next) => {
   const data = ctx.callbackQuery.data;
   await ctx.answerCbQuery();
+  if (data.startsWith('support_reply:')) {
+    if (!supportAdminId || ctx.from.id !== supportAdminId) return ctx.reply('هذا الزر مخصص لحساب الدعم فقط.');
+    const userId = Number(data.split(':')[1]);
+    if (!Number.isSafeInteger(userId) || userId <= 0) return ctx.reply('المستخدم غير صالح.');
+    ctx.session = { flow: 'support_reply', recipientId: userId };
+    return ctx.reply('اكتب ردك الآن، وراح يوصل للمستخدم من Twinny.');
+  }
   if (data === 'match_mode:bot') {
     const me = await ensureRegistered(ctx); if (!me) return;
     const candidates = await availablePeople(me);
@@ -1168,6 +1178,27 @@ bot.on('text', async (ctx) => {
   if (text === '🔔 ضبط تذكير') return choosePartner(ctx, 'reminder', 'اختَر الشريك ثم حدّد وقت التذكير:');
   if (text === '📊 تقريرنا') return showWeeklyReport(ctx);
   if (text === '⭐ قيّم شريكاً') return ratePartner(ctx);
+  if (text === '🆘 تواصل مع الدعم') {
+    if (!supportAdminId) return ctx.reply('الدعم غير مفعّل حالياً. جرّب لاحقاً.');
+    ctx.session = { flow: 'support_message' };
+    return ctx.reply('اكتب رسالتك للدعم بالتفصيل، وراح يرد عليك فريق Twinny من داخل البوت.');
+  }
+  if (ctx.session?.flow === 'support_message') {
+    if (!supportAdminId) { ctx.session = {}; return ctx.reply('الدعم غير مفعّل حالياً.'); }
+    if (text.length < 2 || text.length > 3000) return ctx.reply('اكتب رسالتك من 2 إلى 3000 حرف.');
+    const me = await profile(ctx.from.id);
+    ctx.session = {};
+    await bot.telegram.sendMessage(supportAdminId, `🆘 رسالة دعم جديدة\n━━━━━━━━━━━━\nمن: ${me?.pseudonym || 'مستخدم'}\nالمعرّف الداخلي: ${ctx.from.id}\n${me ? `التخصص: ${me.major} · ${me.academic_year}\n` : ''}━━━━━━━━━━━━\n${text}`, buttons([['رد على المستخدم ↩︎', `support_reply:${ctx.from.id}`]]));
+    return ctx.reply('وصلت رسالتك للدعم ✅ راح يرد عليك هنا من داخل Twinny.', menu);
+  }
+  if (ctx.session?.flow === 'support_reply') {
+    if (!supportAdminId || ctx.from.id !== supportAdminId) { ctx.session = {}; return ctx.reply('هذه المحادثة غير متاحة.'); }
+    if (text.length < 1 || text.length > 3000) return ctx.reply('اكتب رداً من 1 إلى 3000 حرف.');
+    const recipientId = ctx.session.recipientId;
+    ctx.session = {};
+    await bot.telegram.sendMessage(recipientId, `🆘 رد دعم Twinny\n━━━━━━━━━━━━\n${text}`, menu);
+    return ctx.reply('تم إرسال ردك للمستخدم ✅');
+  }
   if (text === '🗑️ حذف حسابي') { ctx.session = { flow: 'delete' }; return ctx.reply('هذا يحذف ملفك وطلباتك وتقييماتك نهائياً. اكتب احذف للتأكيد.'); }
   if (ctx.session?.flow === 'delete') {
     if (text === 'احذف') { await db.from('profiles').delete().eq('telegram_id', ctx.from.id); ctx.session = {}; return ctx.reply('تم حذف حسابك وبياناتك من Twinny.', Markup.removeKeyboard()); }
