@@ -459,7 +459,7 @@ async function showConnections(ctx) {
     const actions = item.status === 'pending' && item.recipient_telegram_id === me.telegram_id
       ? buttons([['أقبل ✅', `accept:${item.id}`], ['أرفض', `reject:${item.id}`]])
       : item.status === 'pending' && item.requester_telegram_id === me.telegram_id
-        ? buttons([['إلغاء الطلب', `cancel_request:${item.id}`]])
+        ? buttons([['🔔 إرسال تذكير', `remind_request:${item.id}`], ['إلغاء الطلب', `cancel_request:${item.id}`]])
         : item.status === 'accepted'
           ? buttons([['إنهاء الشراكة', `end_connection:${item.id}`]]) : undefined;
     if (item.status === 'pending' && item.recipient_telegram_id === me.telegram_id && other) {
@@ -926,6 +926,15 @@ bot.on('callback_query', async (ctx, next) => {
     const { error } = await db.from('connections').delete().eq('id', id);
     if (error) throw error;
     return ctx.reply('تم إلغاء طلب التعارف.');
+  }
+  if (data.startsWith('remind_request:')) {
+    const id = Number(data.split(':')[1]);
+    const { data: connection, error } = await db.from('connections').select('*').eq('id', id).eq('requester_telegram_id', ctx.from.id).eq('status', 'pending').maybeSingle();
+    if (error) throw error;
+    if (!connection) return ctx.reply('هذا الطلب لم يعد قيد الانتظار.');
+    const me = await profile(ctx.from.id);
+    await bot.telegram.sendMessage(connection.recipient_telegram_id, `🔔 تذكير بطلب تعارف دراسي من ${me.pseudonym}.\nافتح الملف وقرّر إذا يناسبك.`, buttons([['أقبل ✅', `accept:${connection.id}`], ['أرفض', `reject:${connection.id}`], ['عرض الملف والطلبات', 'open_requests']]));
+    return ctx.reply('تم إرسال التذكير للشريك ✅');
   }
   if (data.startsWith('end_connection:')) {
     const id = Number(data.split(':')[1]);
