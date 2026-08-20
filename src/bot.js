@@ -507,6 +507,20 @@ async function sendRelay(ctx, connectionId, recipientId, body) {
   const displayName = await hasRevealedName(connectionId, ctx.from.id, recipientId) ? me.real_name : me.pseudonym;
   await bot.telegram.sendMessage(recipientId, `💬 ${displayName}\n━━━━━━━━━━━━\n${body}`, { reply_markup: { inline_keyboard: [[Markup.button.callback(`رد على ${displayName} ↩︎`, `message:${connectionId}:${ctx.from.id}`)]] } });
 }
+async function sendRelayAttachment(ctx, connectionId, recipientId, { type, fileId, caption = '', fileName = '' }) {
+  const me = await profile(ctx.from.id);
+  const displayName = await hasRevealedName(connectionId, ctx.from.id, recipientId) ? me.real_name : me.pseudonym;
+  const label = type === 'photo' ? 'صورة' : `ملف${fileName ? `: ${fileName}` : ''}`;
+  const body = `[${label}]${caption ? ` ${caption}` : ''}`;
+  const { error } = await db.from('messages').insert({ connection_id: connectionId, sender_telegram_id: ctx.from.id, recipient_telegram_id: recipientId, body });
+  if (error) throw error;
+  const options = {
+    caption: `💬 ${displayName}${caption ? `\n━━━━━━━━━━━━\n${caption}` : ''}`,
+    reply_markup: { inline_keyboard: [[Markup.button.callback(`رد على ${displayName} ↩︎`, `message:${connectionId}:${ctx.from.id}`)]] }
+  };
+  if (type === 'photo') await bot.telegram.sendPhoto(recipientId, fileId, options);
+  else await bot.telegram.sendDocument(recipientId, fileId, options);
+}
 function baghdadParts(date = new Date()) {
   return Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Baghdad', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
 }
@@ -1177,7 +1191,7 @@ bot.on('text', async (ctx) => {
   if (text === '👤 ملفي') return bot.handleUpdate({ ...ctx.update, message: { ...ctx.message, text: '/profile', entities: [{ offset: 0, length: 8, type: 'bot_command' }] } });
   if (text === '🤝 طلباتي') return showConnections(ctx);
   if (text === '📝 تحديث بياناتي') { const me = await ensureRegistered(ctx); if (!me) return; return showUpdateMenu(ctx); }
-  if (text === '✉️ راسل شريكاً') return choosePartner(ctx, 'message', 'اختَر الشريك الذي تريد مراسلته:');
+  if (text === '✉️ راسل شريكاً') return choosePartner(ctx, 'message', 'اختَر الشريك الذي تريد مراسلته، وبعدها أرسل نصاً أو صورة أو ملفاً:');
   if (text === '🔐 كشف هويتي') return choosePartner(ctx, 'identity', 'لأي شريك تحب تكشف اسمك الحقيقي؟');
   if (text === '📋 مهامنا') return showTasks(ctx);
   if (text === '➕ مهمة') return choosePartner(ctx, 'task', 'لمن تريد إضافة هذه المهمة المشتركة؟');
@@ -1323,6 +1337,13 @@ bot.on('text', async (ctx) => {
 });
 
 bot.on('photo', async (ctx) => {
+  if (ctx.session?.flow === 'message') {
+    const fileId = ctx.message.photo.at(-1).file_id;
+    const caption = ctx.message.caption?.trim() || '';
+    await sendRelayAttachment(ctx, ctx.session.connectionId, ctx.session.recipientId, { type: 'photo', fileId, caption });
+    ctx.session = {};
+    return ctx.reply('تم إرسال الصورة لشريكك 🖼️', menu);
+  }
   if (ctx.session?.flow !== 'question_add') return;
   const questionSession = await activeQuestionSessionForUser(ctx.session.questionSessionId, ctx.from.id);
   if (!questionSession) { ctx.session = {}; return ctx.reply('الجلسة انتهت أو لم تعد متاحة.', menu); }
@@ -1335,6 +1356,13 @@ bot.on('photo', async (ctx) => {
 });
 
 bot.on('document', async (ctx) => {
+  if (ctx.session?.flow === 'message') {
+    const fileId = ctx.message.document.file_id;
+    const caption = ctx.message.caption?.trim() || '';
+    await sendRelayAttachment(ctx, ctx.session.connectionId, ctx.session.recipientId, { type: 'document', fileId, caption, fileName: ctx.message.document.file_name || '' });
+    ctx.session = {};
+    return ctx.reply('تم إرسال الملف لشريكك 📎', menu);
+  }
   if (ctx.session?.flow !== 'question_add') return;
   const questionSession = await activeQuestionSessionForUser(ctx.session.questionSessionId, ctx.from.id);
   if (!questionSession) { ctx.session = {}; return ctx.reply('الجلسة انتهت أو لم تعد متاحة.', menu); }
