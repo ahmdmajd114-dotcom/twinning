@@ -500,24 +500,32 @@ async function hasRevealedName(connectionId, senderId, recipientId) {
   if (error) throw error;
   return Boolean(data);
 }
+async function setActiveChat(telegramId, connectionId) {
+  const { error } = await db.from('profiles').update({ active_chat_connection_id: connectionId, updated_at: new Date().toISOString() }).eq('telegram_id', telegramId);
+  if (error) throw error;
+}
+async function activeChatForUser(telegramId) {
+  const me = await profile(telegramId);
+  if (!me?.active_chat_connection_id) return null;
+  const { data: connection, error } = await db.from('connections').select('*').eq('id', me.active_chat_connection_id).eq('status', 'accepted').or(`requester_telegram_id.eq.${telegramId},recipient_telegram_id.eq.${telegramId}`).maybeSingle();
+  if (error) throw error;
+  if (!connection) {
+    await db.from('profiles').update({ active_chat_connection_id: null, updated_at: new Date().toISOString() }).eq('telegram_id', telegramId);
+    return null;
+  }
+  return { connectionId: connection.id, recipientId: connection.requester_telegram_id === telegramId ? connection.recipient_telegram_id : connection.requester_telegram_id };
+}
 async function sendRelay(ctx, connectionId, recipientId, body) {
-  const me = await profile(ctx.from.id);
   const { error } = await db.from('messages').insert({ connection_id: connectionId, sender_telegram_id: ctx.from.id, recipient_telegram_id: recipientId, body });
   if (error) throw error;
-  const displayName = await hasRevealedName(connectionId, ctx.from.id, recipientId) ? me.real_name : me.pseudonym;
-  await bot.telegram.sendMessage(recipientId, `💬 ${displayName}\n━━━━━━━━━━━━\n${body}`, { reply_markup: { inline_keyboard: [[Markup.button.callback(`رد على ${displayName} ↩︎`, `message:${connectionId}:${ctx.from.id}`)]] } });
+  await bot.telegram.sendMessage(recipientId, body);
 }
 async function sendRelayAttachment(ctx, connectionId, recipientId, { type, fileId, caption = '', fileName = '' }) {
-  const me = await profile(ctx.from.id);
-  const displayName = await hasRevealedName(connectionId, ctx.from.id, recipientId) ? me.real_name : me.pseudonym;
   const label = type === 'photo' ? 'صورة' : `ملف${fileName ? `: ${fileName}` : ''}`;
   const body = `[${label}]${caption ? ` ${caption}` : ''}`;
   const { error } = await db.from('messages').insert({ connection_id: connectionId, sender_telegram_id: ctx.from.id, recipient_telegram_id: recipientId, body });
   if (error) throw error;
-  const options = {
-    caption: `💬 ${displayName}${caption ? `\n━━━━━━━━━━━━\n${caption}` : ''}`,
-    reply_markup: { inline_keyboard: [[Markup.button.callback(`رد على ${displayName} ↩︎`, `message:${connectionId}:${ctx.from.id}`)]] }
-  };
+  const options = caption ? { caption } : {};
   if (type === 'photo') await bot.telegram.sendPhoto(recipientId, fileId, options);
   else await bot.telegram.sendDocument(recipientId, fileId, options);
 }
@@ -967,8 +975,9 @@ bot.on('callback_query', async (ctx, next) => {
     await db.from('connections').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
     if (status === 'accepted') {
       const accepter = await profile(ctx.from.id); const requester = await profile(connection.requester_telegram_id);
-      await ctx.reply(`تم القبول ✅ صار بإمكانكم البدء بالتنسيق.\nشريكك حالياً: ${requester.pseudonym}\nتقدر تكشف اسمك له لاحقاً من «🔐 كشف هويتي».`);
-      await bot.telegram.sendMessage(connection.requester_telegram_id, `وافق ${accepter.pseudonym} على طلبك ✅ يمكنكما الآن بدء أول جلسة.\nتقدر تكشف اسمك له لاحقاً من «🔐 كشف هويتي».`, menu);
+      await Promise.all([setActiveChat(ctx.from.id, connection.id), setActiveChat(connection.requester_telegram_id, connection.id)]);
+      await ctx.reply(`تم القبول ✅ انفتحت محادثتكم مباشرة. اكتب أي رسالة، صورة أو ملف وراح يوصل لشريكك فوراً.\nشريكك: ${requester.pseudonym}`, menu);
+      await bot.telegram.sendMessage(connection.requester_telegram_id, `وافق ${accepter.pseudonym} على طلبك ✅ انفتحت محادثتكم مباشرة. اكتب أي رسالة، صورة أو ملف وراح يوصل لشريكك فوراً.`, menu);
     } else await ctx.reply('تم رفض الطلب.');
     return;
   }
@@ -987,8 +996,10 @@ bot.on('callback_query', async (ctx, next) => {
   }
   if (data.startsWith('message:')) {
     const [, connectionId, recipientId] = data.split(':');
-    ctx.session = { flow: 'message', connectionId: Number(connectionId), recipientId: Number(recipientId) };
-    return ctx.reply('اكتب رسالتك. إذا كشفت هويتك لهذا الشريك، ستظهر الرسالة باسمك الحقيقي؛ وإلا باسمك المستعار.');
+    const connections = await acceptedConnections(ctx.from.id);
+    if (!connections.some((connection) => connection.id === Number(connectionId))) return ctx.reply('هذه الشراكة لم تعد متاحة.');
+    await setActiveChat(ctx.from.id, Number(connectionId));
+    return ctx.reply('انفتحت المحادثة ✅ هسه أي نص أو صورة أو ملف ترسله يروح مباشرة لشريكك.');
   }
   if (data.startsWith('identity:')) {
     const [, connectionId, recipientId] = data.split(':');
@@ -1236,8 +1247,9 @@ bot.on('text', async (ctx) => {
     }
   }
   if (ctx.session?.flow === 'message') {
+    await setActiveChat(ctx.from.id, ctx.session.connectionId);
     await sendRelay(ctx, ctx.session.connectionId, ctx.session.recipientId, text);
-    ctx.session = {}; return ctx.reply('تم إرسال رسالتك ✉️', menu);
+    ctx.session = {}; return;
   }
   if (ctx.session?.flow === 'end_connection') {
     if (text.length < 3 || text.length > 500) return ctx.reply('اكتب سبباً مختصراً من 3 إلى 500 حرف.');
@@ -1247,6 +1259,7 @@ bot.on('text', async (ctx) => {
     const { error } = await db.from('connections').update({ status: 'cancelled', cancelled_by_telegram_id: ctx.from.id, cancellation_reason: text, cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', connection.id).eq('status', 'accepted');
     if (error) throw error;
     const partnerId = connection.requester_telegram_id === ctx.from.id ? connection.recipient_telegram_id : connection.requester_telegram_id;
+    await db.from('profiles').update({ active_chat_connection_id: null, updated_at: new Date().toISOString() }).in('telegram_id', [ctx.from.id, partnerId]).eq('active_chat_connection_id', connection.id);
     ctx.session = {};
     await bot.telegram.sendMessage(partnerId, 'انتهت شراكتكم الدراسية. تكدر تبحث عن شريك آخر من زر «🔎 ابحث عن شريك».', menu);
     return ctx.reply('تم إنهاء الشراكة. سببك انحفظ لتحسين التوافقية، وتكدر هسه تبحث عن شريك آخر من «🔎 ابحث عن شريك».', menu);
@@ -1319,6 +1332,8 @@ bot.on('text', async (ctx) => {
     }
     return saveProfileField(ctx, field, text);
   }
+  const activeChat = await activeChatForUser(ctx.from.id);
+  if (activeChat) return sendRelay(ctx, activeChat.connectionId, activeChat.recipientId, text);
   if (ctx.session?.flow !== 'register' && ctx.session?.flow !== 'update_preferences') return;
   const s = ctx.session;
   if (s.step === 'real_name') { s.form.real_name = text; s.step = 'gender'; return ctx.reply('حدّد جنسك:', buttons([['بنت', 'gender:female'], ['ولد', 'gender:male']])); }
@@ -1342,9 +1357,14 @@ bot.on('photo', async (ctx) => {
     const caption = ctx.message.caption?.trim() || '';
     await sendRelayAttachment(ctx, ctx.session.connectionId, ctx.session.recipientId, { type: 'photo', fileId, caption });
     ctx.session = {};
-    return ctx.reply('تم إرسال الصورة لشريكك 🖼️', menu);
+    return;
   }
-  if (ctx.session?.flow !== 'question_add') return;
+  if (ctx.session?.flow !== 'question_add') {
+    const activeChat = await activeChatForUser(ctx.from.id);
+    if (!activeChat) return;
+    const fileId = ctx.message.photo.at(-1).file_id;
+    return sendRelayAttachment(ctx, activeChat.connectionId, activeChat.recipientId, { type: 'photo', fileId, caption: ctx.message.caption?.trim() || '' });
+  }
   const questionSession = await activeQuestionSessionForUser(ctx.session.questionSessionId, ctx.from.id);
   if (!questionSession) { ctx.session = {}; return ctx.reply('الجلسة انتهت أو لم تعد متاحة.', menu); }
   const fileId = ctx.message.photo.at(-1).file_id;
@@ -1361,9 +1381,14 @@ bot.on('document', async (ctx) => {
     const caption = ctx.message.caption?.trim() || '';
     await sendRelayAttachment(ctx, ctx.session.connectionId, ctx.session.recipientId, { type: 'document', fileId, caption, fileName: ctx.message.document.file_name || '' });
     ctx.session = {};
-    return ctx.reply('تم إرسال الملف لشريكك 📎', menu);
+    return;
   }
-  if (ctx.session?.flow !== 'question_add') return;
+  if (ctx.session?.flow !== 'question_add') {
+    const activeChat = await activeChatForUser(ctx.from.id);
+    if (!activeChat) return;
+    const fileId = ctx.message.document.file_id;
+    return sendRelayAttachment(ctx, activeChat.connectionId, activeChat.recipientId, { type: 'document', fileId, caption: ctx.message.caption?.trim() || '', fileName: ctx.message.document.file_name || '' });
+  }
   const questionSession = await activeQuestionSessionForUser(ctx.session.questionSessionId, ctx.from.id);
   if (!questionSession) { ctx.session = {}; return ctx.reply('الجلسة انتهت أو لم تعد متاحة.', menu); }
   const fileId = ctx.message.document.file_id;

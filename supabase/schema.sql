@@ -60,6 +60,9 @@ alter table connections add column if not exists cancelled_at timestamptz;
 alter table connections drop constraint if exists connections_status_check;
 alter table connections add constraint connections_status_check check (status in ('pending', 'accepted', 'rejected', 'cancelled'));
 
+-- The currently open partner conversation for each student.
+alter table profiles add column if not exists active_chat_connection_id bigint;
+
 create table if not exists ratings (
   id bigint generated always as identity primary key,
   connection_id bigint not null references connections(id) on delete cascade,
