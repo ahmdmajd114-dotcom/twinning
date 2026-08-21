@@ -10,6 +10,7 @@ if (missing.length) throw new Error(`Missing environment variables: ${missing.jo
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const supportAdminId = Number(process.env.SUPPORT_ADMIN_TELEGRAM_ID || 0);
+const activeChats = new Map();
 const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false }
 });
@@ -501,17 +502,30 @@ async function hasRevealedName(connectionId, senderId, recipientId) {
   return Boolean(data);
 }
 async function setActiveChat(telegramId, connectionId) {
+  activeChats.set(String(telegramId), Number(connectionId));
   const { error } = await db.from('profiles').update({ active_chat_connection_id: connectionId, updated_at: new Date().toISOString() }).eq('telegram_id', telegramId);
+  // The chat must still work if PostgREST has not refreshed a newly added column yet.
+  if (error?.code === 'PGRST204') return;
+  if (error) throw error;
+}
+async function clearActiveChat(telegramIds, connectionId) {
+  telegramIds.forEach((id) => activeChats.delete(String(id)));
+  const { error } = await db.from('profiles').update({ active_chat_connection_id: null, updated_at: new Date().toISOString() }).in('telegram_id', telegramIds).eq('active_chat_connection_id', connectionId);
+  if (error?.code === 'PGRST204') return;
   if (error) throw error;
 }
 async function activeChatForUser(telegramId) {
   const me = await profile(telegramId);
-  if (!me?.active_chat_connection_id) return null;
-  const { data: connection, error } = await db.from('connections').select('*').eq('id', me.active_chat_connection_id).eq('status', 'accepted').or(`requester_telegram_id.eq.${telegramId},recipient_telegram_id.eq.${telegramId}`).maybeSingle();
+  const savedId = activeChats.get(String(telegramId)) || me?.active_chat_connection_id;
+  let connection = null;
+  let error = null;
+  if (savedId) ({ data: connection, error } = await db.from('connections').select('*').eq('id', savedId).eq('status', 'accepted').or(`requester_telegram_id.eq.${telegramId},recipient_telegram_id.eq.${telegramId}`).maybeSingle());
   if (error) throw error;
   if (!connection) {
-    await db.from('profiles').update({ active_chat_connection_id: null, updated_at: new Date().toISOString() }).eq('telegram_id', telegramId);
-    return null;
+    const connections = await acceptedConnections(telegramId);
+    connection = connections.sort((left, right) => new Date(right.updated_at) - new Date(left.updated_at))[0] || null;
+    if (!connection) return null;
+    activeChats.set(String(telegramId), Number(connection.id));
   }
   return { connectionId: connection.id, recipientId: connection.requester_telegram_id === telegramId ? connection.recipient_telegram_id : connection.requester_telegram_id };
 }
@@ -1259,7 +1273,7 @@ bot.on('text', async (ctx) => {
     const { error } = await db.from('connections').update({ status: 'cancelled', cancelled_by_telegram_id: ctx.from.id, cancellation_reason: text, cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', connection.id).eq('status', 'accepted');
     if (error) throw error;
     const partnerId = connection.requester_telegram_id === ctx.from.id ? connection.recipient_telegram_id : connection.requester_telegram_id;
-    await db.from('profiles').update({ active_chat_connection_id: null, updated_at: new Date().toISOString() }).in('telegram_id', [ctx.from.id, partnerId]).eq('active_chat_connection_id', connection.id);
+    await clearActiveChat([ctx.from.id, partnerId], connection.id);
     ctx.session = {};
     await bot.telegram.sendMessage(partnerId, 'انتهت شراكتكم الدراسية. تكدر تبحث عن شريك آخر من زر «🔎 ابحث عن شريك».', menu);
     return ctx.reply('تم إنهاء الشراكة. سببك انحفظ لتحسين التوافقية، وتكدر هسه تبحث عن شريك آخر من «🔎 ابحث عن شريك».', menu);
